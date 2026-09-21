@@ -1,0 +1,13 @@
+node_modules/
+out/
+dist/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.DS_Store
+*.local
+!scripts/
+*.tsbuildinfo
+!tsconfig.json
+release/

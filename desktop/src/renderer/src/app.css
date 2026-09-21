@@ -1,0 +1,1242 @@
+:root {
+  --bg: #0f1117;
+  --panel: #181b24;
+  --panel-2: #1f2330;
+  --border: #2a2f3e;
+  --text: #e6e9f0;
+  --muted: #9aa3b5;
+  --accent: #5b8def;
+  --green: #3fbf7f;
+  --amber: #e0a63c;
+  --red: #e0564f;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.shell {
+  display: flex;
+  height: 100vh;
+}
+.sidebar {
+  width: 210px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sidebar .brand {
+  font-weight: 700;
+  font-size: 15px;
+  padding: 6px 10px 16px;
+  letter-spacing: 0.3px;
+}
+.sidebar button {
+  all: unset;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.sidebar button.active,
+.sidebar button:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  padding: 24px 28px;
+}
+.content h1 {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+.content .sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:hover {
+  border-color: var(--accent);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+table.orgs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.orgs th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+table.orgs td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+table.orgs tr:hover td {
+  background: var(--panel);
+}
+
+.pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.pill.source {
+  background: rgba(91, 141, 239, 0.15);
+  color: var(--accent);
+}
+.pill.target {
+  background: rgba(63, 191, 127, 0.15);
+  color: var(--green);
+}
+.pill.unassigned {
+  background: rgba(154, 163, 181, 0.12);
+  color: var(--muted);
+}
+.pill.prod {
+  background: rgba(224, 86, 79, 0.15);
+  color: var(--red);
+}
+
+.status-ok {
+  color: var(--green);
+}
+.status-warn {
+  color: var(--amber);
+}
+.status-err {
+  color: var(--red);
+}
+.muted {
+  color: var(--muted);
+}
+
+select.role {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.banner {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--red);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+/* Severity variants — `.banner.warn` was already in use but never styled, so
+   advisory banners rendered with the red error accent. */
+.banner.warn {
+  border-left-color: var(--amber);
+}
+
+.banner.ok {
+  border-left-color: var(--green);
+}
+
+/* ── action outcome note (UI-6) ──────────────────────────────────────────────
+   The outcome note used to share `.footprint`, which had ZERO rules — so a real
+   result summary rendered as unstyled body text and went unnoticed (same defect
+   class as `.banner.warn` above and `.scope-rules` in A4: check class-vs-CSS,
+   not just the markup).
+
+   It gets its OWN class rather than styling `.footprint`, because `.footprint`
+   also means "the deploy's record-count footprint" in StepReadiness and
+   StepFields. Those are a different concept that happened to share the name,
+   and styling them as outcome boxes would have been silent collateral damage. */
+.outcome {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  margin: 10px 0 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+}
+.outcome-ok {
+  border-left-color: var(--green);
+}
+.outcome-error {
+  border-left-color: var(--red);
+}
+.outcome-icon {
+  font-weight: 700;
+  line-height: 1;
+}
+.outcome-ok .outcome-icon {
+  color: var(--green);
+}
+.outcome-error .outcome-icon {
+  color: var(--red);
+}
+
+/* ── inline spinner (UI-6) ───────────────────────────────────────────────────
+   Small and subtle, sits inside the button it belongs to. `currentColor` keeps
+   it legible against both the normal and the disabled button background. */
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 8px;
+  vertical-align: -1px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Respect the OS "reduce motion" setting — a spinner is decoration, and the
+   button is already disabled, so freezing it loses no information. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* ── sidebar links (react-router NavLink; replaces the old <button> nav) ── */
+.sidebar a {
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.sidebar a.active,
+.sidebar a:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.sidebar-footer {
+  margin-top: auto;
+  font-size: 11px;
+  padding: 8px 10px;
+}
+
+/* ── Badge ── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-neutral {
+  background: rgba(154, 163, 181, 0.12);
+  color: var(--muted);
+}
+.badge-accent {
+  background: rgba(91, 141, 239, 0.15);
+  color: var(--accent);
+}
+.badge-success {
+  background: rgba(63, 191, 127, 0.15);
+  color: var(--green);
+}
+.badge-warn {
+  background: rgba(224, 166, 60, 0.15);
+  color: var(--amber);
+}
+.badge-danger {
+  background: rgba(224, 86, 79, 0.15);
+  color: var(--red);
+}
+
+/* ── ProgressBar ── */
+.progress {
+  position: relative;
+  height: 18px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  transition: width 0.2s ease;
+}
+.progress-accent {
+  background: var(--accent);
+}
+.progress-success {
+  background: var(--green);
+}
+.progress-danger {
+  background: var(--red);
+}
+.progress-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text);
+}
+
+/* ── SearchInput ── */
+.search {
+  position: relative;
+  display: inline-block;
+}
+.search-input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 26px 7px 10px;
+  font-size: 13px;
+  min-width: 220px;
+}
+.search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+}
+
+/* ── DataTable ── */
+.datatable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.datatable th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.datatable th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.datatable th.sortable:hover {
+  color: var(--text);
+}
+.datatable td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.datatable td.align-right,
+.datatable th.align-right {
+  text-align: right;
+}
+.sort-caret {
+  color: var(--accent);
+}
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+/* ── Modal ── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 380px;
+  max-width: 560px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+.modal-header {
+  font-weight: 600;
+  font-size: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-body {
+  padding: 16px 18px;
+  font-size: 13px;
+  color: var(--text);
+}
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.btn.danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+/* ── Toast ── */
+.toast-host {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 200;
+}
+.toast {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: pointer;
+  max-width: 360px;
+  border-left-width: 3px;
+}
+.toast-info {
+  border-left-color: var(--accent);
+}
+.toast-success {
+  border-left-color: var(--green);
+}
+.toast-error {
+  border-left-color: var(--red);
+}
+
+/* ── Home job list ── */
+.job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.job-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.job-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+/* ── Forms ── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 460px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+}
+.field > span {
+  color: var(--muted);
+}
+.text-input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+/* ── Wizard ── */
+.wizard-head h1 {
+  margin-bottom: 2px;
+}
+.wizard-steps {
+  display: flex;
+  gap: 4px;
+  margin: 14px 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+.wizard-step {
+  all: unset;
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.wizard-step:hover {
+  color: var(--text);
+}
+.wizard-step.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+/* S54 (L1): a step the readiness gate has closed. Still focusable (the click
+   routes back to Readiness with a toast) but visibly unavailable. */
+.wizard-step.gated {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.wizard-step.gated:hover {
+  color: var(--muted);
+}
+.wizard-body h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+.intersection-banner {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* ── ObjectPicker ── */
+.object-picker {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.picker-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.picker-actions {
+  display: flex;
+  gap: 8px;
+}
+/* S49 (UI-2b): object list left, package filter right. The package filter used
+   to be a ~50-chip wall across the top that pushed the list below the fold. */
+.picker-split {
+  display: grid;
+  grid-template-columns: 1fr minmax(180px, 220px);
+  align-items: stretch;
+}
+.picker-packages {
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  max-height: 360px;
+  overflow: auto;
+  padding: 8px 0;
+}
+.picker-packages > h4 {
+  margin: 0 0 6px;
+  padding: 0 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.picker-packages > ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.package-row {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.package-row:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.package-row.active {
+  background: var(--accent);
+  color: #fff;
+}
+.package-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.package-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+@media (max-width: 860px) {
+  .picker-split {
+    grid-template-columns: 1fr;
+  }
+  .picker-packages {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: 180px;
+  }
+}
+
+.chip {
+  all: unset;
+  cursor: pointer;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.chip:hover {
+  color: var(--text);
+}
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+  max-height: 360px;
+  overflow: auto;
+  min-width: 0;
+}
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.picker-row:hover {
+  background: var(--panel);
+}
+.picker-name {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* 5B.5 Mappings */
+.map-object {
+  margin-bottom: 10px;
+}
+.map-object-hdr {
+  width: 100%;
+  text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+.map-strategy,
+.map-matchfield,
+.map-customvalue {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.map-matchfield,
+.map-customvalue {
+  width: 130px;
+}
+.map-detail {
+  font-size: 12px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 5B.8 Plan review */
+.plan-order {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 8px;
+}
+.plan-order th,
+.plan-order td {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.plan-order .num {
+  text-align: right;
+  width: 1%;
+  white-space: nowrap;
+}
+.plan-order-row.draggable {
+  cursor: grab;
+}
+.plan-order-row.junction {
+  color: var(--muted);
+}
+.plan-order-row.dragging {
+  opacity: 0.5;
+}
+.plan-order-row.drop-target td {
+  border-top: 2px solid var(--accent);
+}
+.plan-order[data-busy] {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.drag-handle {
+  color: var(--muted);
+  letter-spacing: -2px;
+  user-select: none;
+}
+.btn.icon {
+  padding: 2px 8px;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+/* 5B.8 Automation panel + CPQ attestation */
+.automation-panel {
+  margin-top: 20px;
+}
+.automation-panel h3 {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.master-toggle {
+  display: block;
+  font-size: 13px;
+  margin: 4px 0;
+}
+.automation-summary {
+  font-size: 13px;
+}
+.automation-table-wrap {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.automation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.automation-table th,
+.automation-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+}
+.cpq-notice ol {
+  margin: 8px 0 8px 20px;
+  font-size: 13px;
+}
+.cpq-attest {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 8px 0;
+}
+.deploy-gate-note {
+  font-size: 12px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.btn[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Transient confirmation next to the Org Connections role picker. */
+.role-saved {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ── Deployment detail + Home deployment cards (S46 D3/D5-min) ── */
+.kpi-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0 14px;
+}
+.kpi {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-width: 100px;
+  display: flex;
+  flex-direction: column;
+}
+.kpi-value {
+  font-size: 18px;
+  font-weight: 600;
+}
+.kpi-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.error-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  margin: 8px 0 0;
+  max-height: 260px;
+  overflow: auto;
+}
+.restore-steps {
+  margin: 6px 0 0 18px;
+  padding: 0;
+  font-size: 13px;
+}
+.restore-steps li {
+  margin-bottom: 4px;
+}
+.deployment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.card-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.card-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+}
+.error-snippet {
+  font-size: 12px;
+  color: var(--red);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Scope step: mode + filters (S49 UI-1 / UI-2d) ─────────────────────────
+   These classes existed in the markup with ZERO css, so the browser defaults
+   won: <fieldset> rendered its groove bevel with the <legend> notched through
+   the border line ("archaic, like an old computer"), and the filter rows were
+   inline label+input pairs that COLLIDED, each starting at a different x
+   because the object-name labels are variable width. */
+.scope-mode {
+  /* kill the native fieldset bevel; match the app's other panels */
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 12px 14px;
+  margin: 0 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* S50 (A4): was a <fieldset> with a <legend> and two radios. The radios wrote
+   config.filterMode, which nothing read, so they were removed; this is now a
+   plain panel stating the rule the engine actually follows. The legend/label/
+   radio rules that used to live here went with them. */
+.scope-mode > h3 {
+  padding: 0;
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.scope-rules {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.scope-rules > li::marker {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.scope-rules strong {
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.filters {
+  margin-top: 4px;
+}
+.filters > h3 {
+  margin: 0 0 4px;
+}
+.filters > p.muted {
+  margin: 0 0 12px;
+}
+
+.filter-editor {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.filter-editor:first-of-type {
+  border-top: none;
+}
+/* fixed label column + flexible input: one left edge for every input, and the
+   label can never overlap the field again */
+.filter-row {
+  display: grid;
+  /* label | input | remove (S49 UI-2d) */
+  grid-template-columns: minmax(160px, 260px) 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+.filter-object {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgb(91 141 239 / 25%);
+}
+.filter-status {
+  grid-column: 2;
+  margin-top: 4px;
+  font-size: 12px;
+}
+/* The COUNT()/validation verdict is the whole point of the filter row, and
+   both states were rendering in default body text (`.ok` only ever matched
+   `.banner.ok`). Same class of miss as the S49 `.scope-mode` bug. */
+.filter-status > .ok {
+  color: var(--green);
+}
+.filter-status > .err {
+  color: var(--red);
+}
+/* S54 F1: a valid clause that matched nothing — amber, not green. */
+.filter-status > .warn {
+  color: var(--amber);
+}
+/* S54 F1: the one-line "why it cannot match" under the amber line. */
+.filter-status > .hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+
+/* ── S49 (UI-2c) selection pills ─────────────────────────────────────────── */
+.selection-pills {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.selection-pills-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.selection-pills-head > h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.pill-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+  max-width: 100%;
+}
+.pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pill-remove {
+  all: unset;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.pill-remove:hover {
+  color: var(--text);
+  background: var(--border);
+}
+button.pill-more {
+  all: unset;
+  cursor: pointer;
+  padding: 3px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+}
+button.pill-more:hover {
+  color: var(--text);
+}
+.btn.subtle {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.btn.subtle:hover {
+  color: var(--text);
+}
+
+/* ── S49 (UI-2d) "add a filter" list ─────────────────────────────────────── */
+.filters-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.filters-head > h3 {
+  margin: 0;
+}
+.filter-item {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.filter-item:first-child {
+  border-top: none;
+}
+.filter-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0 4px;
+}
+.filter-add > select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.filter-add > select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgb(91 141 239 / 25%);
+}
+.filter-remove {
+  all: unset;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.filter-remove:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
+/* ── S52: roles on the Orgs step ─────────────────────────────────────────── */
+.role-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 12px;
+  color: var(--text);
+}
+.banner ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+.banner .btn {
+  margin-top: 6px;
+}
+
+/* ── S52: stale connections on the Connections page ─────────────────────── */
+.stale-orgs {
+  margin-top: 24px;
+}
+.stale-orgs summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.stale-orgs table {
+  margin-top: 8px;
+}
+.btn-small {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+/* ── S57 (B2): the missing-parent advisor on the Scope step ─────────────────
+   A NEW class needs a NEW rule (third strike: .scope-rules, .banner.warn,
+   .footprint all shipped unstyled) — check class-vs-CSS, not just the markup. */
+.advisor {
+  margin: 14px 0;
+}
+.advisor-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.advisor-head > h3 {
+  margin: 0;
+}
+.advisor > h3,
+.advisor-head > h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.advisor-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.advisor-card.required {
+  border-left-color: var(--red);
+}
+.advisor-card.keyed {
+  border-left-color: var(--green);
+}
+.advisor-card p {
+  margin: 4px 0;
+}
+.advisor-card code {
+  font-size: 12px;
+  word-break: break-all;
+}
+.advisor-card .toolbar {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
