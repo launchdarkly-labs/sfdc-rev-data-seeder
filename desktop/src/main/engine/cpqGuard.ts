@@ -71,11 +71,12 @@ import type { AutomationToggleIo, ToggleCalloutResult } from './automationToggle
 import { urlEncode } from './automationToggle'
 import { EXT_ID_FIELD } from './readiness'
 import { buildDraftActivationQuery, buildDraftActivationQueryByIds } from './deploy/transform/contracts'
+import { DATA_API_PATH } from '../../shared/apiVersion'
 
 /** Apex CPQ_GUARD_TTL_HOURS (AMS:928). */
 export const CPQ_GUARD_TTL_HOURS = 8
 
-const DATA = '/services/data/v66.0'
+const DATA = DATA_API_PATH
 
 /** The E4A.2 callout seam plus the clock the TTL stamps need. */
 export interface CpqGuardIo extends AutomationToggleIo {

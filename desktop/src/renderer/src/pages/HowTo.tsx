@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { EXT_ID_FIELD } from '../../../shared/mappingPolicy'
 import { RDS_PERMISSION_SET } from '../../../shared/types'
+import { API_VERSION } from '../../../shared/apiVersion'
 import { DRY_RUN_CAVEAT } from '../../../shared/templates/types'
 
 /**
@@ -14,7 +15,7 @@ import { DRY_RUN_CAVEAT } from '../../../shared/templates/types'
  */
 export function HowToPage(): React.JSX.Element {
   return (
-    <>
+    <div className="prose">
       <h1>How To</h1>
       <p className="sub">
         Connecting orgs, running a deployment, and exactly what this app writes to a target org.
@@ -30,8 +31,9 @@ export function HowToPage(): React.JSX.Element {
       <ul>
         <li>
           <strong>The source org is never written to.</strong> Reads only — enforced in code, not by
-          convention. LaunchDarkly production is permanently pinned read-only and can never be
-          selected as a target.
+          convention. The production org pinned on <Link to="/connections">Connections</Link> is
+          read-only too and can never be selected as a target; paste your own production Org Id
+          there once.
         </li>
         <li>
           <strong>Records are upserted, not blindly inserted</strong>, keyed on a dedicated External
@@ -48,12 +50,17 @@ export function HowToPage(): React.JSX.Element {
           reference resolves by target Id, by name match, or is deferred to a second pass once the
           referenced record exists.
         </li>
+        <li>
+          <strong>One Salesforce API version.</strong> Every call this build makes — REST, Tooling,
+          UI API and Metadata — uses <code>v{API_VERSION}</code>. Both orgs must support it; any
+          org on the current or previous two releases does.
+        </li>
       </ul>
 
       <h2>Adding an org</h2>
       <ol>
         <li>
-          Go to <Link to="/connections">Org Connections</Link>.
+          Go to <Link to="/connections">Connections</Link>.
         </li>
         <li>
           <strong>From the Salesforce CLI</strong> — click <em>Refresh from sf CLI</em>. Every org
@@ -92,13 +99,17 @@ export function HowToPage(): React.JSX.Element {
           exists.
         </li>
         <li>
-          <strong>Scope</strong> — choose the objects to include and the root records to start from
-          (a filter, or explicit record Ids). Only objects present in both orgs are offered.
+          <strong>Objects</strong> — pick the objects to copy. Only objects present in both orgs are
+          offered; a saved preset can fill the list.
         </li>
         <li>
-          <strong>Readiness</strong> — checks the target for the External Id field on each in-scope
-          object. One button creates every missing field and grants your user access to them in the
-          same step. See the table below.
+          <strong>Scope</strong> — the root records to start from (a filter, or explicit record Ids).
+          Everything else is scoped by its parent.
+        </li>
+        <li>
+          <strong>Readiness</strong> (keyed runs only) — checks the target for the External Id field on
+          each in-scope object. One button creates every missing field and grants your user access to
+          them in the same step. See the table below.
         </li>
         <li>
           <strong>Mappings</strong> — per-object reference strategy (target Id, name match, or
@@ -109,12 +120,18 @@ export function HowToPage(): React.JSX.Element {
           rollups, autonumbers, audit fields) are excluded automatically.
         </li>
         <li>
-          <strong>Summary</strong> — the automation panel and, for CPQ objects, the{' '}
-          <em>Triggers Disabled</em> attestation. The deploy will not start until you attest.
+          <strong>Stages</strong> (optional) — saved data-seed or post-refresh templates to run before
+          the data lands or after it.
         </li>
         <li>
-          <strong>Plan</strong> — the frozen, ordered object plan with record counts. Review it,
-          then <em>Start Deploy</em>.
+          <strong>Summary</strong> — runs the analysis: dependency order, scoped record counts,
+          junction detection and REST/Bulk routing.
+        </li>
+        <li>
+          <strong>Plan</strong> — the ordered object plan, the target-org automation to disable, and
+          for CPQ objects the <em>Triggers Disabled</em> confirmation. Review it, then{' '}
+          <em>Deploy</em>. On a deployment that already ran the button says <em>Re-run deploy</em> and
+          asks first.
         </li>
       </ol>
 
@@ -125,7 +142,7 @@ export function HowToPage(): React.JSX.Element {
       </p>
 
       <h3>Permanent — metadata it creates</h3>
-      <table className="orgs">
+      <table className="table">
         <thead>
           <tr>
             <th>What</th>
@@ -169,7 +186,7 @@ export function HowToPage(): React.JSX.Element {
         Each item is recorded in a local ledger before it is touched, and put back at the end of the
         run — including when the run fails.
       </p>
-      <table className="orgs">
+      <table className="table">
         <thead>
           <tr>
             <th>What</th>
@@ -316,6 +333,6 @@ export function HowToPage(): React.JSX.Element {
           app copies the source&rsquo;s already-computed values instead of recomputing them.
         </li>
       </ul>
-    </>
+    </div>
   )
 }

@@ -14,14 +14,8 @@ import { TemplatesPage } from './pages/templates/TemplatesPage'
 import { TemplateBuilderPage } from './pages/templates/TemplateBuilder'
 import { TemplateRunPage } from './pages/templates/TemplateRunPage'
 import { TemplateRunReportPage } from './pages/templates/TemplateRunReportPage'
-import {
-  ExtIdsPage,
-  HistoryPage,
-  NotFoundPage,
-  SettingsPage,
-  ToolsPage,
-  WelcomePage
-} from './pages/placeholders'
+import { NotFoundPage, RedirectHome, WelcomePage } from './pages/placeholders'
+import { SettingsPage } from './pages/Settings'
 
 /** Routes IPC AUTH_EXPIRED errors to a toast (re-auth UX arrives with A7). */
 function AuthExpiredBridge(): null {
@@ -48,9 +42,9 @@ export function App(): React.JSX.Element {
             <Route element={<AppShell />}>
               <Route index element={<HomePage />} />
               <Route path="connections" element={<ConnectionsPage />} />
-              <Route path="extids" element={<ExtIdsPage />} />
-              <Route path="history" element={<HistoryPage />} />
-              <Route path="tools" element={<ToolsPage />} />
+              <Route path="extids" element={<RedirectHome />} />
+              <Route path="history" element={<RedirectHome />} />
+              <Route path="tools" element={<RedirectHome />} />
               <Route path="howto" element={<HowToPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="welcome" element={<WelcomePage />} />

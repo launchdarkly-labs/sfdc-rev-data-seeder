@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { isKeyless, stepBeforeMappings } from '../../../../shared/wizard'
+import { memo, useCallback, useMemo, useState } from 'react'
+import { nextLabel, isKeyless, stepBeforeMappings } from '../../../../shared/wizard'
 import type { FieldInfo, Template, TemplateKind } from '../../../../shared/types'
 import type { FieldMapping, MappingStrategy } from '../../../../shared/wizard'
 import {
@@ -22,7 +22,10 @@ import { useIpcQuery } from '../../ipc/hooks'
 import { callIpc, toRdsError } from '../../ipc/client'
 import { useWizard } from './WizardShell'
 import { useTargetKeys } from './useTargetKeys'
+import type { DescribeCache } from './describeCache'
 import { OutcomeNote, errNote, okNote, type Note } from '../../ui/OutcomeNote'
+import { Loading } from '../../ui/Loading'
+import { EmptyState } from '../../ui/EmptyState'
 
 const MAPPINGS_KIND: TemplateKind = 'mappings'
 
@@ -30,20 +33,22 @@ const MAPPINGS_KIND: TemplateKind = 'mappings'
 type BusyAction = 'suggest' | 'template' | null
 
 /**
- * Describe both orgs (cached) and return the deployable (source∩target) reference
- * fields with their first `referenceTo`. Shared by Suggest and template-apply so
- * both act only on fields that exist on BOTH orgs (mirrors Apex getDeployableFields).
+ * Describe both orgs (through the shell's describe cache — S64 P5, 5.6a) and
+ * return the deployable (source∩target) reference fields with their first
+ * `referenceTo`. Shared by Suggest and template-apply so both act only on fields
+ * that exist on BOTH orgs (mirrors Apex getDeployableFields).
  */
 async function deployableRefFields(
+  describe: DescribeCache['describe'],
   sourceConnectionId: string,
   targetConnectionId: string,
   objectName: string
 ): Promise<RefFieldRef[]> {
-  // Route through callIpc so an AUTH_EXPIRED describe surfaces the re-auth prompt
-  // (raw window.rds calls bypass that); still throws so callers can handle failure.
+  // The cache routes through callIpc so an AUTH_EXPIRED describe surfaces the
+  // re-auth prompt; it still throws so callers can handle failure.
   const [src, tgt] = await Promise.all([
-    callIpc(() => window.rds.describeObject(sourceConnectionId, objectName)),
-    callIpc(() => window.rds.describeObject(targetConnectionId, objectName))
+    describe(sourceConnectionId, objectName),
+    describe(targetConnectionId, objectName)
   ])
   // BOTH-side deployability (isCreateable/!calculated/!autoNumber/!system-managed)
   // mirrors Apex getDeployableFields — raw describes would surface CreatedById/
@@ -71,7 +76,8 @@ async function deployableRefFields(
  * locks from reference-coverage analysis are a 5B.3-followup — not wired yet.
  */
 export function StepMappings(): React.JSX.Element {
-  const { config, updateConfig, goToStep, sourceConnectionId, targetConnectionId } = useWizard()
+  const { config, updateConfig, goToStep, sourceConnectionId, targetConnectionId, describe } =
+    useWizard()
   const objects = config.selectedObjects
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 
@@ -94,20 +100,29 @@ export function StepMappings(): React.JSX.Element {
   // during a template apply would name the wrong work.
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const busy = busyAction !== null
+  // ux F-9: Suggest describes every in-scope object one by one; say how far it is.
+  const [describeProgress, setDescribeProgress] = useState<{ done: number; total: number } | null>(null)
   const [note, setNote] = useState<Note | undefined>()
   const ok = (text: string): void => setNote(okNote(text))
   const err = (text: string): void => setNote(errNote(text))
 
   const toggle = (obj: string): void => setExpanded((e) => ({ ...e, [obj]: !e[obj] }))
 
-  // Persist a single field's override (or clear it). Reads the current config
-  // snapshot each call (fresh per render) and shallow-merges the whole mappings map.
-  const setFieldMapping = (obj: string, field: string, mapping: FieldMapping | undefined): void => {
-    const objMap = { ...(config.mappings[obj] ?? {}) }
-    if (mapping) objMap[field] = mapping
-    else delete objMap[field]
-    updateConfig({ mappings: { ...config.mappings, [obj]: objMap } })
-  }
+  // Persist a single field's override (or clear it). S64 P5 (5.6d): uses the
+  // UPDATER form of updateConfig so it reads the freshest mappings (the shell's
+  // latest-value ref, never a render snapshot) and stays referentially stable —
+  // the memoised MappingRow / DetailCell only re-render for their own change.
+  const setFieldMapping = useCallback(
+    (obj: string, field: string, mapping: FieldMapping | undefined): void => {
+      updateConfig((prev) => {
+        const objMap = { ...(prev.mappings[obj] ?? {}) }
+        if (mapping) objMap[field] = mapping
+        else delete objMap[field]
+        return { mappings: { ...prev.mappings, [obj]: objMap } }
+      })
+    },
+    [updateConfig]
+  )
 
   // Suggest: probe live Id-overlap and apply directId-vs-nameMatch to every
   // directId-default reference (unlocked) across all in-scope objects. Non-directId
@@ -122,12 +137,17 @@ export function StepMappings(): React.JSX.Element {
       const nextMappings = { ...config.mappings }
       let toDirectId = 0
       let toNameMatch = 0
+      setDescribeProgress({ done: 0, total: objects.length })
+      let described = 0
       for (const obj of objects) {
         let refFields: RefFieldRef[]
         try {
-          refFields = await deployableRefFields(sourceConnectionId, targetConnectionId, obj)
+          refFields = await deployableRefFields(describe, sourceConnectionId, targetConnectionId, obj)
         } catch {
           continue // best-effort: an un-describable object is skipped
+        } finally {
+          described += 1
+          setDescribeProgress({ done: described, total: objects.length })
         }
         const objMap = { ...(nextMappings[obj] ?? {}) }
         for (const rf of refFields) {
@@ -160,6 +180,7 @@ export function StepMappings(): React.JSX.Element {
       err(`Suggest failed: ${toRdsError(e).message}`)
     } finally {
       setBusyAction(null)
+      setDescribeProgress(null)
     }
   }
 
@@ -216,6 +237,7 @@ export function StepMappings(): React.JSX.Element {
         if (!entries) continue
         try {
           refFieldsByObject[obj] = await deployableRefFields(
+            describe,
             sourceConnectionId,
             targetConnectionId,
             obj
@@ -343,14 +365,14 @@ export function StepMappings(): React.JSX.Element {
           </div>
           <div className="toolbar">
             <select
-              className="map-strategy"
+              className="select"
               aria-label="Saved mapping template"
               value={selectedTemplateId === '' ? '' : String(selectedTemplateId)}
               onChange={(e) =>
                 setSelectedTemplateId(e.target.value === '' ? '' : Number(e.target.value))
               }
             >
-              <option value="">— saved templates —</option>
+              <option value="">— saved presets —</option>
               {templates.data?.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -379,9 +401,9 @@ export function StepMappings(): React.JSX.Element {
               Delete
             </button>
             <input
-              className="map-matchfield"
+              className="input-sm"
               aria-label="Template name"
-              placeholder="template name"
+              placeholder="preset name"
               value={templateName}
               onChange={(e) => setTemplateName(e.target.value)}
             />
@@ -395,10 +417,14 @@ export function StepMappings(): React.JSX.Element {
           </div>
         </>
       )}
-      <OutcomeNote note={note} />
+      {busyAction === 'suggest' && describeProgress ? (
+        <Loading label={`Describing ${describeProgress.done} / ${describeProgress.total} objects…`} />
+      ) : (
+        <OutcomeNote note={note} />
+      )}
 
       {objects.length === 0 ? (
-        <p className="muted">No objects in scope yet — add some in the Scope step.</p>
+        <EmptyState title="No objects in scope yet" hint="Add some on the Objects step." />
       ) : (
         objects.map((obj) => (
           <div key={obj} className="map-object">
@@ -407,7 +433,7 @@ export function StepMappings(): React.JSX.Element {
               aria-expanded={!!expanded[obj]}
               onClick={() => toggle(obj)}
             >
-              {expanded[obj] ? '▾' : '▸'} {obj}
+              <span aria-hidden="true">{expanded[obj] ? '▾' : '▸'}</span> {obj}
             </button>
             {expanded[obj] && (
               <ObjectMappingTable
@@ -439,7 +465,7 @@ export function StepMappings(): React.JSX.Element {
           Back
         </button>
         <button className="btn primary" disabled={busy} onClick={() => goToStep('fields')}>
-          Next: fields
+          {nextLabel('fields')}
         </button>
         {busy && <span className="muted">Finishing the current action…</span>}
       </div>
@@ -468,17 +494,20 @@ interface ObjectMappingTableProps {
 /** One object's reference-field mapping table. Mounts only when the section is expanded. */
 function ObjectMappingTable(props: ObjectMappingTableProps): React.JSX.Element {
   const { objectName, selectedObjects, overrides, sourceConnectionId, targetConnectionId } = props
+  // S61 (U-5): keyless — never ask the target about keys. S64 P5 (5.6a): the
+  // shell's describe cache — a re-expand or a later step never re-pulls.
+  const { config: wizardConfig, describe } = useWizard()
 
   // Describe BOTH orgs and intersect field API names: a reference field present
   // only on the source would fail at upsert, so it must never be mappable — this
   // mirrors the Apex LWC's getDeployableFields(source∩target) (deploymentMappings.js
-  // L296-302). Both describes are SQLite-cached, so two calls are cheap.
+  // L296-302). Cached in the shell (and in main's SQLite), so two calls are cheap.
   const srcDescribe = useIpcQuery(
-    () => window.rds.describeObject(sourceConnectionId, objectName),
+    () => describe(sourceConnectionId, objectName),
     [sourceConnectionId, objectName]
   )
   const tgtDescribe = useIpcQuery(
-    () => window.rds.describeObject(targetConnectionId, objectName),
+    () => describe(targetConnectionId, objectName),
     [targetConnectionId, objectName]
   )
 
@@ -516,8 +545,7 @@ function ObjectMappingTable(props: ObjectMappingTableProps): React.JSX.Element {
       ),
     [refFields, objectName, selectedObjects]
   )
-  // S61 (U-5): keyless — never ask the target about keys; out-of-scope refs stay locked to skip.
-  const { config: wizardConfig } = useWizard()
+  // Out-of-scope refs stay locked to skip in keyless mode.
   const { keys: targetKeys } = useTargetKeys(targetConnectionId, isKeyless(wizardConfig) ? [] : probeCandidates)
 
   const sample = useIpcQuery(
@@ -537,7 +565,7 @@ function ObjectMappingTable(props: ObjectMappingTableProps): React.JSX.Element {
     tgtDescribe.refetch()
   }
 
-  if (describeLoading) return <p className="muted">Loading fields for {objectName}…</p>
+  if (describeLoading) return <Loading label={`Loading fields for ${objectName}…`} />
   if (describeError) {
     return (
       <div className="banner">
@@ -568,7 +596,8 @@ function ObjectMappingTable(props: ObjectMappingTableProps): React.JSX.Element {
           Sample values unavailable: {sampleErr}
         </div>
       )}
-      <table className="orgs">
+      <div className="table-wrap">
+      <table className="table">
         <thead>
           <tr>
             <th>Field</th>
@@ -597,6 +626,7 @@ function ObjectMappingTable(props: ObjectMappingTableProps): React.JSX.Element {
           ))}
         </tbody>
       </table>
+      </div>
     </>
   )
 }
@@ -616,12 +646,17 @@ interface MappingRowProps {
   setFieldMapping: (obj: string, field: string, mapping: FieldMapping | undefined) => void
 }
 
-function MappingRow(props: MappingRowProps): React.JSX.Element {
+/** One reference-field row. S64 P5 (5.6d): memoised — every prop is a primitive
+ *  or a reference that only changes when THIS row's inputs change
+ *  (`setFieldMapping` is a stable callback from the step). */
+const MappingRow = memo(function MappingRow(props: MappingRowProps): React.JSX.Element {
   const { objectName, field, selectedObjects, override, sampleValue, sampleErrored, targetKeys } =
     props
   const { refTo } = field
 
   const locked = isStrategyLocked(refTo, objectName, selectedObjects, targetKeys)
+  // ux T-9: a short badge in the cell; the policy's full sentence sits behind "why".
+  const lockShort = refTo === objectName ? 'self-reference' : 'parent not in deployment'
   // S57 (B1): the ONE policy call — the Fields step and the plan freeze make the
   // same one, so what this row shows is what deploys.
   const effective: MappingStrategy = effectiveStrategy(
@@ -667,12 +702,10 @@ function MappingRow(props: MappingRowProps): React.JSX.Element {
       <td>{sampleCell}</td>
       <td>
         {locked ? (
-          <span className="status-warn" title={lockBadge(refTo, objectName)}>
-            Skip 🔒
-          </span>
+          <span className="badge badge-neutral lock-badge">Locked · {lockShort}</span>
         ) : (
           <select
-            className="map-strategy"
+            className="select"
             aria-label={`Strategy for ${field.fieldName}`}
             value={chosen}
             disabled={props.disabled}
@@ -688,7 +721,10 @@ function MappingRow(props: MappingRowProps): React.JSX.Element {
       </td>
       <td>
         {locked ? (
-          <span className="muted">{lockBadge(refTo, objectName)}</span>
+          <details className="lock-why">
+            <summary>Skipped on deploy — why?</summary>
+            <p>{lockBadge(refTo, objectName)}</p>
+          </details>
         ) : (
           <>
             <DetailCell
@@ -711,7 +747,7 @@ function MappingRow(props: MappingRowProps): React.JSX.Element {
       </td>
     </tr>
   )
-}
+})
 
 interface DetailCellProps {
   objectName: string
@@ -724,8 +760,9 @@ interface DetailCellProps {
   setFieldMapping: (obj: string, field: string, mapping: FieldMapping | undefined) => void
 }
 
-/** Strategy-specific detail: nameMatch key input, customId value input, or a preview. */
-function DetailCell(props: DetailCellProps): React.JSX.Element {
+/** Strategy-specific detail: nameMatch key input, customId value input, or a preview.
+ *  S64 P5 (5.6d): memoised alongside MappingRow. */
+const DetailCell = memo(function DetailCell(props: DetailCellProps): React.JSX.Element {
   const { objectName, field, effective, matchField, customValue, targetUserLabel } = props
   switch (effective) {
     case 'nameMatch':
@@ -733,7 +770,7 @@ function DetailCell(props: DetailCellProps): React.JSX.Element {
         <label className="map-detail">
           matched by{' '}
           <input
-            className="map-matchfield"
+            className="input-sm"
             aria-label={`Match field for ${field.fieldName}`}
             value={matchField}
             disabled={props.disabled}
@@ -751,7 +788,7 @@ function DetailCell(props: DetailCellProps): React.JSX.Element {
         <label className="map-detail">
           value{' '}
           <input
-            className="map-customvalue"
+            className="input-sm"
             aria-label={`Custom value for ${field.fieldName}`}
             // customId writes the value verbatim onto a target reference (Id) field;
             // cap at 18 chars to match the Apex LWC and avoid the Id-overflow scar.
@@ -776,7 +813,7 @@ function DetailCell(props: DetailCellProps): React.JSX.Element {
     default:
       return <span className="muted">omitted</span>
   }
-}
+})
 
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s

@@ -1,0 +1,119 @@
+/* S64 P3 — p3-components. Uses the tokens declared in ../app.css only; no new colours or sizes. */
+
+/* ── EmptyState (ux C-12) ── */
+.empty-state {
+  padding: var(--space-6) var(--space-5);
+  text-align: center;
+  color: var(--muted);
+}
+.empty-state-title {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+.empty-state-hint {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-sm);
+}
+.empty-state-action {
+  margin-top: var(--space-4);
+}
+/* an empty state inside a table cell or list keeps the row's left edge */
+td > .empty-state,
+.picker-empty > .empty-state {
+  text-align: left;
+  padding: var(--space-3) 0;
+}
+.picker-empty {
+  padding: var(--space-2) var(--space-5);
+}
+
+/* ── Loading (ux C-13) ── */
+.loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  min-height: 20px; /* same height as a `.muted` line, so nothing jumps when it resolves */
+}
+.loading > .spinner {
+  margin-left: 0;
+  flex: none;
+}
+.loading-label {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── CancelJobButton (ux F-5) ── */
+.cancel-job {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.cancel-job-helper {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+/* ── Toast (ux F-4 / A-7) ── */
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  cursor: default;
+}
+.toast-message {
+  flex: 1;
+}
+.toast-close {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0 var(--space-1);
+  margin: -2px -4px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-xl);
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.toast-close:hover {
+  color: var(--text);
+  background: var(--border);
+}
+.toast-dismiss-all {
+  align-self: flex-end;
+}
+
+/* ── DataTable sort buttons (ux A-5) ── */
+.th-sort {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: inherit;
+}
+.th-sort:hover {
+  color: var(--text);
+}
+
+/* ── Mappings lock badge + why disclosure (ux T-9) ── */
+.lock-badge {
+  white-space: nowrap;
+}
+.lock-why {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.lock-why > summary {
+  cursor: pointer;
+}
+.lock-why > p {
+  margin: var(--space-1) 0 0;
+}

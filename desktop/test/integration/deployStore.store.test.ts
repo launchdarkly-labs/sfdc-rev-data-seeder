@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { Store, MIGRATIONS } from '../../src/main/services/store'
+import { RUN_SCOPED_SQL } from '../../src/main/services/deployStore'
 import type { FailureClassification, RecordOutcome } from '../../src/main/engine/deploy/types'
 
 let store: Store
@@ -428,6 +429,33 @@ describe('DeployStore — counter-view query plan (S50 A2 regression guard)', ()
     expect(plan.some((d) => d.includes('SEARCH rr USING INTEGER PRIMARY KEY'))).toBe(true)
     // The pre-007 shape: record_results as the outer table of the latest-row join.
     expect(plan.some((d) => d.includes('SEARCH rr USING INDEX idx_record_results_run'))).toBe(false)
+  })
+
+  /**
+   * S64 P5 (5.3). MEASURED on the 2026-10-19 DB copy (47,591 record_results
+   * over 34 runs): the view's outer `run_id = ?` cannot enter its MATERIALIZED
+   * CTE, so `la` scanned the whole index (`run_id>?`) — 50–68 ms for the
+   * largest run, 31 ms for a 209-row run, growing with every run ever written
+   * (170 / 133 ms on a 5× copy). With the predicate inside: 23 ms / 3 ms, and
+   * 18 ms / 1 ms on the 5× copy. This pins the SHAPE: the scoped `la` seeks
+   * by `run_id=?`, and the 007 directives survive in the scoped query.
+   */
+  it('the run-scoped counter query seeks la by run_id=? and keeps the 007 drive order', () => {
+    const { runId } = newRun()
+    recordBatch(runId, 'Account', {}, { a01: 'success', a02: ['failed', 'root'] })
+
+    const db = (store as unknown as { db: import('better-sqlite3').Database }).db
+    const plan = (
+      db.prepare(`EXPLAIN QUERY PLAN ${RUN_SCOPED_SQL.objectCounters}`).all({ runId }) as {
+        detail: string
+      }[]
+    ).map((r) => r.detail)
+
+    expect(plan.some((d) => d.includes('SEARCH rr USING INTEGER PRIMARY KEY'))).toBe(true)
+    expect(plan.some((d) => /MATERIALIZE la/.test(d))).toBe(true)
+    // The whole point: no `run_id>?` range scan over every run's rows anywhere in the plan.
+    expect(plan.some((d) => d.includes('run_id>?'))).toBe(false)
+    expect(plan.filter((d) => d.includes('idx_record_results_latest (run_id=?')).length).toBeGreaterThan(0)
   })
 
   it('keeps both migration-007 indexes', () => {
@@ -1086,5 +1114,151 @@ describe('S63 — text_id_relinks ledger (migration 013)', () => {
         { objectApiName: 'X', sourceId: 's', targetId: null, fieldName: 'f', refObject: 'X', sourceValue: 'v', resolvedValue: null, outcome: 'bogus' as 'failed', reason: null }
       ])
     ).toThrow(/CHECK constraint/)
+  })
+})
+
+describe('DeployStore — run-scoped counters agree with the migration-012 views (S64 P5 5.3)', () => {
+  it('objectCounters / runCounters / deployedSourceIds / skipReasonCounts match the view rows byte for byte, per run', () => {
+    // Two runs with overlapping objects, multiple attempts and retry passes, so
+    // the scoped CTEs have to isolate by run AND reproduce the latest-attempt rule.
+    const a = newRun().runId
+    const b = newRun().runId
+    recordBatch(a, 'Account', {}, { a01: 'success', a02: ['failed', 'root'], a03: 'skipped' })
+    recordBatch(a, 'Account', { retryPass: 1 }, { a02: 'success' })
+    recordBatch(a, 'Contact', {}, { c01: ['failed', 'cascade'], c02: 'success' })
+    recordBatch(a, 'Contact', { objectAttempt: 1 }, { c01: 'success', c02: 'success', c03: ['failed', null] })
+    recordBatch(b, 'Account', {}, { a01: ['failed', 'root'], a09: 'success' })
+    recordBatch(b, 'Account', { pass: 2 }, { a09: 'success' })
+    store.deploy.recordResults(b, [
+      { objectApiName: 'Contact', sourceId: 'c77', pass: 1, retryPass: 0, objectAttempt: 0, outcome: 'skipped', errorMessage: 'NO_PARENT c77 x' }
+    ])
+
+    const db = (store as unknown as { db: import('better-sqlite3').Database }).db
+    for (const runId of [a, b]) {
+      const viewObj = db
+        .prepare('SELECT * FROM v_run_object_counters WHERE run_id = ? ORDER BY object_api_name')
+        .all(runId)
+      const scopedObj = db.prepare(RUN_SCOPED_SQL.objectCounters).all({ runId })
+      expect(scopedObj).toEqual(viewObj)
+      const viewRun = db.prepare('SELECT * FROM v_run_counters WHERE run_id = ?').get(runId)
+      const scopedRun = db.prepare(RUN_SCOPED_SQL.runCounters).get({ runId })
+      expect(scopedRun).toEqual(viewRun)
+      for (const obj of ['Account', 'Contact']) {
+        const viewIds = (
+          db
+            .prepare(
+              `SELECT source_id AS sid FROM v_run_record_current
+               WHERE run_id = ? AND object_api_name = ? AND outcome = 'success' ORDER BY id`
+            )
+            .all(runId, obj) as { sid: string }[]
+        ).map((r) => r.sid)
+        expect(store.deploy.deployedSourceIds(runId, obj)).toEqual(viewIds)
+      }
+      const viewSkips = db
+        .prepare(
+          `SELECT CASE WHEN instr(error_message, ' ') > 0 THEN substr(error_message, 1, instr(error_message, ' ') - 1)
+                  ELSE error_message END AS reason, COUNT(*) AS n
+           FROM v_run_record_current WHERE run_id = ? AND outcome = 'skipped' AND error_message IS NOT NULL
+           GROUP BY reason ORDER BY n DESC, reason`
+        )
+        .all(runId) as { reason: string; n: number }[]
+      expect(store.deploy.skipReasonCounts(runId)).toEqual(viewSkips.map((r) => ({ reason: r.reason, count: r.n })))
+    }
+    // And the facade's typed readers see the same numbers (a02 healed on retry; c01 healed on re-attempt).
+    expect(counters(a, 'Account')).toMatchObject({ recordsDeployed: 2, recordsFailed: 0, recordsSkipped: 1 })
+    expect(counters(a, 'Contact')).toMatchObject({ recordsQueried: 3, recordsDeployed: 2, recordsFailed: 1, recordsFailedRoot: 1 })
+    expect(store.deploy.runCounters(b)).toMatchObject({ recordsDeployed: 1, recordsFailed: 1, recordsSkipped: 1 })
+  })
+
+  it('a run with no results reads as zeroes, not undefined', () => {
+    const { runId } = newRun()
+    expect(store.deploy.objectCounters(runId)).toEqual([])
+    expect(store.deploy.runCounters(runId)).toMatchObject({ runId, recordsQueried: 0, recordsDeployed: 0 })
+  })
+})
+
+describe('DeployStore — run phase timings + peak memory (migration 014, S64 P5 5.1)', () => {
+  it('every setRunPhase stamps a run_phases row at the transition time, in order', () => {
+    const { runId } = newRun()
+    store.deploy.setRunPhase(runId, 'DisablingAutomation')
+    store.deploy.setRunPhase(runId, 'Deploying')
+    store.deploy.setRunPhase(runId, 'SecondPass')
+    store.deploy.setRunPhase(runId, 'Finalizing')
+    store.deploy.setRunPhase(runId, 'RestoringAutomation')
+    store.deploy.setRunPhase(runId, 'Completed')
+    const phases = store.deploy.runPhases(runId)
+    expect(phases.map((p) => p.phase)).toEqual([
+      'DisablingAutomation',
+      'Deploying',
+      'SecondPass',
+      'Finalizing',
+      'RestoringAutomation',
+      'Completed'
+    ])
+    for (let i = 1; i < phases.length; i++) expect(phases[i]!.at).toBeGreaterThanOrEqual(phases[i - 1]!.at)
+    // The terminal stamp equals finished_at — the strip's last segment ends exactly there.
+    expect(phases[phases.length - 1]!.at).toBe(store.deploy.getRun(runId)!.finishedAt)
+  })
+
+  it('the handler’s pre-run phases are flushed with their ORIGINAL timestamps and sort before the engine’s', () => {
+    const { runId } = newRun()
+    const t0 = Date.now() - 5000
+    // Buffered before the run existed (the handler’s stampPhase), flushed after createRun.
+    store.deploy.stampRunPhases(runId, [
+      { phase: 'Connecting', at: t0 },
+      { phase: 'Gates', at: t0 + 1200 },
+      { phase: 'Freezing plan', at: t0 + 2500 }
+    ])
+    store.deploy.stampRunPhases(runId, [{ phase: 'Auditing target', at: t0 + 4000 }])
+    store.deploy.setRunPhase(runId, 'Deploying')
+    expect(store.deploy.runPhases(runId).map((p) => p.phase)).toEqual([
+      'Connecting',
+      'Gates',
+      'Freezing plan',
+      'Auditing target',
+      'Deploying'
+    ])
+    expect(store.deploy.runPhases(runId)[1]!.at).toBe(t0 + 1200)
+    // An empty flush is a no-op, not an error.
+    store.deploy.stampRunPhases(runId, [])
+    expect(store.deploy.runPhases(runId)).toHaveLength(5)
+  })
+
+  it('peak memory round-trips as MB-per-label JSON; null until written; garbage reads as null', () => {
+    const { runId } = newRun()
+    expect(store.deploy.runPeakMemory(runId)).toBeNull()
+    store.deploy.setRunPeakMemory(runId, { main: 412, renderer: 380, gpu: 91 })
+    expect(store.deploy.runPeakMemory(runId)).toEqual({ main: 412, renderer: 380, gpu: 91 })
+    const db = (store as unknown as { db: import('better-sqlite3').Database }).db
+    db.prepare('UPDATE deploy_runs SET peak_memory = ? WHERE id = ?').run('not json', runId)
+    expect(store.deploy.runPeakMemory(runId)).toBeNull()
+    db.prepare('UPDATE deploy_runs SET peak_memory = ? WHERE id = ?').run('{"main":"x","gpu":7}', runId)
+    expect(store.deploy.runPeakMemory(runId)).toEqual({ gpu: 7 })
+    expect(() => store.deploy.setRunPeakMemory(999999, { main: 1 })).toThrow(/not found/)
+  })
+
+  it('run_phases cascade with the run; the ledger (run_uuid, restore_confirmed) index exists and is used', () => {
+    const { runId } = newRun()
+    store.deploy.setRunPhase(runId, 'Deploying')
+    store.deploy.setRunPhase(runId, 'Finalizing')
+    const db = (store as unknown as { db: import('better-sqlite3').Database }).db
+    expect((db.prepare('SELECT COUNT(*) AS n FROM run_phases WHERE run_id = ?').get(runId) as { n: number }).n).toBe(2)
+    // A deployment that ran keeps its history (canDeleteDeployment), so the cascade
+    // is exercised at the FK itself: deleting the run row must take its stamps with it.
+    db.prepare('DELETE FROM deploy_runs WHERE id = ?').run(runId)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM run_phases WHERE run_id = ?').get(runId) as { n: number }).n).toBe(0)
+
+    const names = (db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all() as { name: string }[]).map((r) => r.name)
+    expect(names).toContain('idx_run_phases_run')
+    expect(names).toContain('idx_ledger_run_restore')
+    const plan = (
+      db
+        .prepare(
+          `EXPLAIN QUERY PLAN SELECT id FROM automation_ledger_mirror WHERE run_uuid = ? AND restore_confirmed = 0 ORDER BY id`
+        )
+        .all('run-1') as { detail: string }[]
+    ).map((r) => r.detail)
+    expect(plan.some((d) => d.includes('idx_ledger_run_restore'))).toBe(true)
+    expect(plan.some((d) => /^SCAN automation_ledger_mirror$/.test(d.trim()))).toBe(false)
   })
 })

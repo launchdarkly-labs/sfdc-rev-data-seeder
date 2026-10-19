@@ -1,23 +1,28 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
+import { isDeployFinished,
   attestationBlocked,
+  effectiveDisable,
   hasTemplateSteps,
   isKeyless,
-  KEYLESS_CAUTION,
+  KEYLESS_CAUTION_LEAD,
+  KEYLESS_CAUTION_MORE,
   readinessGate,
   readinessGateMessage,
   snapshotWithTemplateGates,
   stageLabels,
   templateStepsOf
 } from '../../../../shared/wizard'
+import { GLOSSARY } from '../../../../shared/labels'
 import { isWillFailWarning } from '../../../../shared/scopeAdvisor'
 import { textIdRelinkPreview } from '../../../../shared/fieldPolicy'
 import type { AutomationSnapshot, PlanObjectView, PlanView } from '../../../../shared/types'
 import { Badge } from '../../ui/Badge'
 import { useIpcMutation, useIpcQuery } from '../../ipc/hooks'
+import { useConfirm } from '../../ui/ConfirmDialog'
+import { Icon, type IconName } from '../../ui/Icon'
 import { useJobsStore, useLatestJobForDeployment } from '../../store/jobs'
-import { AutomationPanel } from './AutomationPanel'
+import { AutomationPanel, CpqTriggersNotice, cpqNoticeRequired } from './AutomationPanel'
 import { useWizard } from './WizardShell'
 
 /**
@@ -27,19 +32,29 @@ import { useWizard } from './WizardShell'
  * `applyDeploymentPlan` fix): omitted objects and junctions keep their
  * analysis slots; only the rows the user placed are refilled in their order.
  * Junction rows are non-draggable (matched by lookup pair, not upserted);
- * deferred-field revisit passes render as non-draggable badges on their
- * object's row — a revisit pass has no slot of its own to move.
+ * deferred-field second passes render as non-draggable badges on their
+ * object's row — a second pass has no slot of its own to move.
  *
  * Reordering is blocked while an analysis job for this deployment is running
  * (main enforces the same guard — a completing analysis rewrites every plan
  * row) and while the scope has drifted from the analyzed plan (the header nav
  * can reach this step without passing StepSummary's staleness gate).
+ *
+ * S64 (P3, ux IA-7): the six banners that used to stack above Deploy are ONE
+ * "Pre-flight" checklist — one row per gate (automation scan, the CPQ
+ * "Triggers Disabled" confirmation, objects that will fail entirely, readiness,
+ * the text-Id relink, stages), each with a ✓ / ☐ / ⚠ state, a one-line summary
+ * and the former banner text behind a disclosure. The automation table lives
+ * under the Automation row. Every gate predicate is unchanged.
  */
 export function StepPlan(): React.JSX.Element {
-  const { deploymentId, config, updateConfig, goToStep } = useWizard()
+  const { deploymentId, config, updateConfig, goToStep, status } = useWizard()
   // S54 (L1): defence in depth — the readiness gate also closes Deploy here.
   const gate = readinessGate(config)
   const navigate = useNavigate()
+  const confirm = useConfirm()
+  // S64 (P2): a Completed / Failed / Cancelled deployment reaching Deploy is a RE-RUN — say so, and ask.
+  const rerun = isDeployFinished(status)
   const [plan, setPlan] = useState<PlanView | null | undefined>(undefined)
   const [planError, setPlanError] = useState<string | undefined>(undefined)
   const reorder = useIpcMutation((input: { deploymentId: number; objectOrder: string[] }) =>
@@ -160,7 +175,17 @@ export function StepPlan(): React.JSX.Element {
   }
 
   function moveRow(name: string, dir: -1 | 1): void {
-    if (reorderBlocked) return // buttons stay focusable (aria-disabled), so guard here
+    if (reorderBlocked) {
+      // A-11: the buttons stay focusable (aria-disabled), so a blocked click says why in the live region.
+      setLiveMessage(
+        analysisRunning
+          ? 'Reordering is disabled while analysis runs'
+          : scopeChanged
+            ? 'Reordering is disabled until the plan is re-analyzed for the changed scope'
+            : 'A reorder is already in progress'
+      )
+      return
+    }
     const names = draggableOrder()
     const i = names.indexOf(name)
     const j = i + dir
@@ -184,13 +209,105 @@ export function StepPlan(): React.JSX.Element {
     void applyOrder(names, moved)
   }
 
+  // ── Pre-flight rows ──
+  const cpqRequired = cpqNoticeRequired(gateSnapshot, discover.loading)
+  const cpqBlocked = attestationBlocked(gateSnapshot, discover.loading, config.cpqAttestation)
+  const keyless = isKeyless(config)
+  const snapshotItems = gateSnapshot?.items ?? []
+  const toDisableCount = snapshotItems.filter((i) => effectiveDisable(i, config)).length
+  const mastersOff = !(config.disableAutomations ?? true) && !(config.disableDuplicateRules ?? false)
+  const hasJunction = (plan?.objects ?? []).some((o) => o.isJunction)
+
+  const automationState: PreflightState = discover.loading
+    ? 'pending'
+    : discover.error
+      ? 'warn'
+      : gateSnapshot
+        ? 'ok'
+        : 'pending'
+  const automationSummary = discover.loading
+    ? 'Scanning the target org for active automation…'
+    : discover.error
+      ? `Scan failed — ${discover.error.message}`
+      : gateSnapshot
+        ? snapshotItems.length === 0
+          ? 'No active automation on the target'
+          : mastersOff
+            ? 'Automation stays active during the deploy'
+            : `${toDisableCount} of ${snapshotItems.length} item${snapshotItems.length === 1 ? '' : 's'} will be disabled, then restored`
+        : 'Not scanned yet'
+
+  const cpqState: PreflightState = discover.loading || !gateSnapshot
+    ? discover.error
+      ? 'warn'
+      : 'pending'
+    : cpqBlocked
+      ? 'todo'
+      : 'ok'
+  const cpqSummary = discover.loading
+    ? 'Waiting for the automation scan'
+    : !gateSnapshot
+      ? 'Needs a successful automation scan'
+      : cpqBlocked
+        ? 'Confirm you checked Triggers Disabled in the target org'
+        : cpqRequired
+          ? 'Confirmed for this scan'
+          : gateSnapshot.hasCpqTriggerSetting
+            ? 'Not needed — the target’s legacy CPQ trigger setting is disabled by the app'
+            : 'Not needed — no CPQ-gated objects in this run'
+
+  const willFailState: PreflightState = willFail.length === 0 ? 'ok' : willFailAcked ? 'ok' : 'todo'
+  const willFailSummary =
+    willFail.length === 0
+      ? 'No object is predicted to fail entirely'
+      : willFailAcked
+        ? `Acknowledged — ${willFail.length} object${willFail.length === 1 ? '' : 's'} will fail entirely`
+        : `${willFail.length} object${willFail.length === 1 ? '' : 's'} will fail entirely — acknowledge to deploy anyway`
+
+  const readinessState: PreflightState = keyless ? 'ok' : gate.blocked ? 'warn' : 'ok'
+  const readinessSummary = keyless
+    ? 'Not needed — without an External Id (insert-only)'
+    : gate.blocked
+      ? gate.reason === 'blocked'
+        ? `${gate.objects.length} object${gate.objects.length === 1 ? ' has' : 's have'} no usable External Id field on the target`
+        : gate.reason === 'stale'
+          ? 'Scope changed since the last Readiness check'
+          : 'Target not checked for this scope yet'
+      : `Target ready for this scope${config.readiness?.checkedAt ? ` · checked ${new Date(config.readiness.checkedAt).toLocaleString()}` : ''}`
+
+  const relinkState: PreflightState = relinkGaps.length > 0 ? 'warn' : 'ok'
+  const relinkLabel =
+    relinkPreview.length === 0
+      ? 'Relink of text-Id fields'
+      : `Relink of ${relinkPreview.length} text-Id field${relinkPreview.length === 1 ? '' : 's'}`
+  const relinkSummary =
+    relinkPreview.length === 0
+      ? 'No text fields in this plan hold record Ids'
+      : relinkGaps.length > 0
+        ? `${relinkGaps.length} point${relinkGaps.length === 1 ? 's' : ''} at an object outside this deployment`
+        : 'Rewritten to the target’s Ids after the data lands'
+
+  const stagesSummary = composed
+    ? `${labels.length} stage${labels.length === 1 ? '' : 's'}, run in order`
+    : 'Data deployment only'
+
+  const gateNote = gate.blocked
+    ? readinessGateMessage(gate)
+    : cpqBlocked
+      ? 'Deploy is blocked until you confirm the CPQ “Triggers Disabled” step above.'
+      : !willFailAcked
+        ? 'Deploy is blocked until you acknowledge the objects that will fail entirely (above).'
+        : composed
+          ? 'Deploy runs the stages in order: templates before the data, the data deployment, templates after.'
+          : 'Deploy freezes the plan, disables the selected automation, loads the data, then restores automation.'
+
   return (
     <>
       <h2>Deployment plan</h2>
       <p className="muted">
         The exact per-object order the deploy will run — drag a row (or use ↑/↓) to reorder. Objects
         you don&rsquo;t move keep their analysis position; junctions are matched by their parent
-        lookups, not upserted, and always keep their slot.
+        lookups rather than by an External Id, and always keep their slot.
       </p>
 
       {planError && <div className="banner error">Could not load the plan: {planError}</div>}
@@ -259,66 +376,150 @@ export function StepPlan(): React.JSX.Element {
           </tbody>
         </table>
       )}
-
-      <AutomationPanel
-        snapshot={gateSnapshot}
-        discovering={discover.loading}
-        error={discover.error}
-        onRescan={() => void runDiscovery()}
-      />
-
-      {isKeyless(config) && (
-        <div className="banner warn" role="note" data-testid="keyless-note">
-          <strong>Keyless deployment.</strong> {KEYLESS_CAUTION}
-        </div>
+      {hasJunction && (
+        <p className="muted legend">
+          <span className="badge badge-accent">junction</span> {GLOSSARY.junction}
+        </p>
       )}
 
-      {composed && (
-        <div className="banner warn" role="note" data-testid="stage-list">
-          <strong>
-            This run has {labels.length} stage{labels.length === 1 ? '' : 's'}:
-          </strong>{' '}
-          {labels.map((l, i) => `${i + 1}. ${l}`).join(' → ')}. A stage that ends blocked, failed or cancelled stops the
-          sequence.
-        </div>
-      )}
+      <section className="preflight" aria-labelledby="preflight-heading" data-testid="preflight">
+        <h3 id="preflight-heading">Pre-flight</h3>
+        <ul className="preflight-list">
+          <PreflightRow label="Automation scan" state={automationState} summary={automationSummary} testId="preflight-automation">
+            <AutomationPanel
+              snapshot={gateSnapshot}
+              discovering={discover.loading}
+              error={discover.error}
+              onRescan={() => void runDiscovery()}
+            />
+          </PreflightRow>
 
-      {relinkPreview.length > 0 && (
-        <div className={relinkGaps.length > 0 ? 'banner warn' : 'banner info'} role="note" data-testid="relink-notice">
-          <strong>
-            {relinkPreview.length} text field{relinkPreview.length === 1 ? '' : 's'} that hold record Ids will be relinked
-            after the data lands:
-          </strong>{' '}
-          {relinkPreview.map((r) => `${r.object}.${r.field}`).join(', ')}.
-          {relinkGaps.length > 0 && (
-            <>
-              {' '}
-              <strong>Scope gap:</strong>{' '}
-              {relinkGaps.map((r) => `${r.object}.${r.field} points at ${r.refObject}, which is not in this deployment`).join('; ')}
-              . Those values can only resolve to rows an earlier deployment mapped; add the object to link them in this run.
-            </>
-          )}
-        </div>
-      )}
+          <PreflightRow
+            label="CPQ “Triggers Disabled” confirmation"
+            state={cpqState}
+            summary={cpqSummary}
+            open={cpqState === 'todo'}
+            testId="preflight-cpq"
+          >
+            {cpqRequired && gateSnapshot ? (
+              <CpqTriggersNotice snapshot={gateSnapshot} />
+            ) : (
+              <p className="muted">
+                {GLOSSARY.attestation} It is only asked for when the run touches objects that Salesforce
+                CPQ&rsquo;s managed triggers react to and the target has no legacy trigger setting the app
+                can turn off itself.
+              </p>
+            )}
+          </PreflightRow>
 
-      {willFail.length > 0 && (
-        <div className="banner will-fail" role="alert" data-testid="will-fail">
-          <strong>
-            {willFail.length} object{willFail.length === 1 ? '' : 's'} will fail entirely as planned.
-          </strong>
-          <ul>
-            {willFail.map((w) => (
-              <li key={w}>{w}</li>
-            ))}
-          </ul>
-          <label className="master-toggle">
-            <input
-              type="checkbox"
-              checked={willFailAcked}
-              onChange={(e) => setAckedKey(e.target.checked ? willFailKey : null)}
-            />{' '}
-            Deploy anyway — I understand every row of {willFail.length === 1 ? 'this object' : 'these objects'} will fail
-          </label>
+          <PreflightRow
+            label="Objects that will fail entirely"
+            state={willFailState}
+            summary={willFailSummary}
+            open={willFailState === 'todo'}
+            testId="preflight-will-fail"
+          >
+            {willFail.length > 0 ? (
+              <div className="will-fail" role="alert" data-testid="will-fail">
+                <strong>
+                  {willFail.length} object{willFail.length === 1 ? '' : 's'} will fail entirely as planned.
+                </strong>
+                <ul>
+                  {willFail.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+                <label className="master-toggle">
+                  <input
+                    type="checkbox"
+                    checked={willFailAcked}
+                    onChange={(e) => setAckedKey(e.target.checked ? willFailKey : null)}
+                  />{' '}
+                  Deploy anyway — I understand every row of {willFail.length === 1 ? 'this object' : 'these objects'} will fail
+                </label>
+              </div>
+            ) : (
+              <p className="muted">
+                The analysis predicts a whole object failing when a required lookup points at an object
+                that is not in this deployment. None was found in this plan.
+              </p>
+            )}
+          </PreflightRow>
+
+          <PreflightRow label="Readiness" state={readinessState} summary={readinessSummary} open={readinessState === 'warn'} testId="preflight-readiness">
+            {keyless ? (
+              <div role="note" data-testid="keyless-note">
+                <strong>Without an External Id (insert-only).</strong> {KEYLESS_CAUTION_LEAD}
+                <details className="learn-more">
+                  <summary>Learn more</summary>
+                  <p>{KEYLESS_CAUTION_MORE}</p>
+                </details>
+              </div>
+            ) : gate.blocked ? (
+              <>
+                <p>{readinessGateMessage(gate)}</p>
+                <button className="btn btn-small" onClick={() => goToStep('readiness')}>
+                  Open the Readiness step
+                </button>
+              </>
+            ) : (
+              <p className="muted">
+                Every object in scope carries the External Id field this app adds to the target, so re-running
+                this deployment updates the same rows.
+              </p>
+            )}
+          </PreflightRow>
+
+          <PreflightRow label={relinkLabel} state={relinkState} summary={relinkSummary} open={relinkState === 'warn'} testId="preflight-relink">
+            {relinkPreview.length > 0 ? (
+              <div role="note" data-testid="relink-notice">
+                <strong>
+                  {relinkPreview.length} text field{relinkPreview.length === 1 ? '' : 's'} that hold record Ids will be relinked
+                  after the data lands:
+                </strong>{' '}
+                {relinkPreview.map((r) => `${r.object}.${r.field}`).join(', ')}.
+                {relinkGaps.length > 0 && (
+                  <>
+                    {' '}
+                    <strong>Scope gap:</strong>{' '}
+                    {relinkGaps.map((r) => `${r.object}.${r.field} points at ${r.refObject}, which is not in this deployment`).join('; ')}
+                    . Those values can only resolve to rows an earlier deployment mapped; add the object to link them in this run.
+                  </>
+                )}
+              </div>
+            ) : (
+              <p className="muted">
+                Some fields hold record Ids as text rather than as lookups; when a plan includes them they are
+                rewritten to the target&rsquo;s Ids after the load. This plan has none.
+              </p>
+            )}
+          </PreflightRow>
+
+          <PreflightRow label="Stages" state="ok" summary={stagesSummary} testId="preflight-stages">
+            {composed ? (
+              <div role="note" data-testid="stage-list">
+                <strong>
+                  This run has {labels.length} stage{labels.length === 1 ? '' : 's'}:
+                </strong>{' '}
+                {labels.map((l, i) => `${i + 1}. ${l}`).join(' → ')}. A stage that ends blocked, failed or cancelled stops the
+                sequence.
+              </div>
+            ) : (
+              <p className="muted">
+                Only the data deployment runs. Templates can run before or after it — add them on the Stages step.
+              </p>
+            )}
+          </PreflightRow>
+        </ul>
+        <p className="muted deploy-gate-note">{gateNote}</p>
+      </section>
+
+      {rerun && (
+        <div className="banner warn" role="note" data-testid="rerun-note">
+          <strong>This deployment already ran ({status}).</strong>{' '}
+          {isKeyless(config)
+            ? 'Deploying again is a re-run: rows this app mapped before are updated through its id map; anything it has not mapped lands again as new rows.'
+            : 'Deploying again is a re-run: rows already on the target are updated in place (matched by the External Id) and new rows are inserted.'}
         </div>
       )}
 
@@ -335,10 +536,21 @@ export function StepPlan(): React.JSX.Element {
             deploy.loading ||
             gate.blocked ||
             !willFailAcked ||
-            attestationBlocked(gateSnapshot, discover.loading, config.cpqAttestation)
+            cpqBlocked
           }
           onClick={() =>
-            void deploy.mutate().then(async (started) => {
+            void (async () => {
+              if (rerun) {
+                const ok = await confirm({
+                  title: 'Re-run this deployment?',
+                  message: isKeyless(config)
+                    ? 'Without an External Id: rows this app mapped before are updated through its id map; anything it has not mapped lands again as new rows.'
+                    : 'Rows already on the target are updated in place (matched by the External Id); new rows are inserted.',
+                  confirmLabel: 'Re-run deploy'
+                })
+                if (!ok) return
+              }
+              const started = await deploy.mutate()
               // failure surfaces via deploy.error below; only navigate on start
               if (!started) return
               // Re-hydrate the job store BEFORE navigating: a job known only
@@ -347,24 +559,13 @@ export function StepPlan(): React.JSX.Element {
               // the monitor would load once and never update (S47 review).
               await useJobsStore.getState().refresh()
               navigate(`/deployments/${deploymentId}`)
-            })
+            })()
           }
         >
-          {deploy.loading ? 'Starting…' : composed ? 'Run stages & deploy' : 'Deploy'}
+          {deploy.loading ? 'Starting…' : rerun ? (composed ? 'Re-run stages & deploy' : 'Re-run deploy') : composed ? 'Run stages & deploy' : 'Deploy'}
         </button>
       </div>
       {deploy.error && <p className="error">Deploy failed to start: {deploy.error.message}</p>}
-      <p className="muted deploy-gate-note">
-        {gate.blocked
-          ? readinessGateMessage(gate)
-          : attestationBlocked(gateSnapshot, discover.loading, config.cpqAttestation)
-            ? 'Deploy is blocked until you confirm the CPQ "Triggers Disabled" step above.'
-            : !willFailAcked
-              ? 'Deploy is blocked until you acknowledge the objects that will fail entirely (above).'
-              : composed
-                ? 'Deploy runs the stages in order: templates before the data, the data deployment, templates after.'
-                : 'Deploy freezes the plan, disables the selected automation, loads the data, then restores automation.'}
-      </p>
     </>
   )
 }
@@ -375,6 +576,54 @@ export function StepPlan(): React.JSX.Element {
  * existing imports keep working.
  */
 export { attestationBlocked }
+
+type PreflightState = 'ok' | 'todo' | 'warn' | 'pending'
+
+const PREFLIGHT_ICON: Record<PreflightState, IconName> = { ok: 'check', todo: 'square', warn: 'warn', pending: 'dots' }
+const PREFLIGHT_WORD: Record<PreflightState, string> = {
+  ok: 'Done',
+  todo: 'To do',
+  warn: 'Needs attention',
+  pending: 'In progress'
+}
+
+/**
+ * One gate of the Pre-flight card: a state glyph (decorative — the state word is
+ * read by assistive tech), a label, a one-line summary and the detail behind a
+ * native disclosure. `open` is applied as the initial state and re-applied only
+ * when it changes, so a user who toggles the row keeps their choice.
+ */
+function PreflightRow({
+  label,
+  state,
+  summary,
+  open,
+  testId,
+  children
+}: {
+  label: string
+  state: PreflightState
+  summary: string
+  open?: boolean
+  testId?: string
+  children: ReactNode
+}): React.JSX.Element {
+  return (
+    <li className="preflight-row" data-state={state} data-testid={testId}>
+      <details open={open || undefined}>
+        <summary className="preflight-summary">
+          <span className="preflight-mark" aria-hidden="true">
+            <Icon name={PREFLIGHT_ICON[state]} />
+          </span>
+          <span className="sr-only">{PREFLIGHT_WORD[state]}: </span>
+          <span className="preflight-label">{label}</span>
+          <span className="preflight-line muted">{summary}</span>
+        </summary>
+        <div className="preflight-body">{children}</div>
+      </details>
+    </li>
+  )
+}
 
 function PlanRow({
   obj,
@@ -451,18 +700,22 @@ function PlanRow({
           </span>
         )}
         {obj.objectName}{' '}
-        {obj.isJunction && <Badge tone="accent">junction — matched, not upserted</Badge>}
+        {obj.isJunction && (
+          <span className="badge badge-accent" title={GLOSSARY.junction}>
+            junction
+          </span>
+        )}
         {obj.hasCircularReference && <Badge tone="warn">cycle</Badge>}
         {obj.requiresTriggerBypass && <Badge tone="danger">CPQ</Badge>}
       </td>
       <td className="num">{obj.recordCount.toLocaleString()}</td>
       <td>
-        <Badge tone="neutral">pass 1 · {obj.apiStrategy}</Badge>{' '}
+        <Badge tone="neutral">First pass · {obj.apiStrategy}</Badge>{' '}
         {obj.deferredFields.length > 0 && (
-          <Badge tone="neutral">
-            revisit pass · {obj.deferredFields.length} deferred field
+          <span className="badge badge-neutral" title={GLOSSARY.deferred}>
+            Second pass · {obj.deferredFields.length} deferred field
             {obj.deferredFields.length === 1 ? '' : 's'}
-          </Badge>
+          </span>
         )}
       </td>
       <td className="num">

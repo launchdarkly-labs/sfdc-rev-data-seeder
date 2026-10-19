@@ -60,7 +60,7 @@ export function deploymentRoleIssues(source: RoleRow, target: RoleRow): RoleIssu
       label: target.label,
       role: target.role,
       fixable: false,
-      reason: `${target.label} is LaunchDarkly production — permanently read-only, it can never be a target.`
+      reason: `${target.label} is the pinned production org — read-only, it can never be a target.`
     })
   } else if (target.role !== 'target') {
     const unassigned = target.role === 'unassigned'

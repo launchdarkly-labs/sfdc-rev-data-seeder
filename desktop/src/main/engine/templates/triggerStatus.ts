@@ -28,9 +28,10 @@ import type { TriggerToggleIo } from '../triggerBodyToggle'
 import { escapeSingleQuotes, ciEquals } from '../deploy/transform/apexSemantics'
 import { buildZip } from './zip'
 import type { OrgWriter } from './io'
+import { API_VERSION, API_VERSION_NUMBER, TOOLING_QUERY_PATH, TOOLING_SOBJECTS_PATH } from '../../../shared/apiVersion'
 
-const TOOLING_BASE = '/services/data/v66.0/tooling/sobjects/'
-const TOOLING_QUERY = '/services/data/v66.0/tooling/query/?q='
+const TOOLING_BASE = TOOLING_SOBJECTS_PATH
+const TOOLING_QUERY = TOOLING_QUERY_PATH
 const MD_NS = 'http://soap.sforce.com/2006/04/metadata'
 
 export type TriggerStatus = 'Active' | 'Inactive'
@@ -65,7 +66,7 @@ export async function fetchTriggerRecords(
       id: m.Id,
       name: m.Name,
       body: typeof m.Body === 'string' ? m.Body : '',
-      apiVersion: typeof m.ApiVersion === 'number' ? m.ApiVersion : parseFloat(String(m.ApiVersion ?? '66.0')) || 66,
+      apiVersion: typeof m.ApiVersion === 'number' ? m.ApiVersion : parseFloat(String(m.ApiVersion ?? API_VERSION)) || API_VERSION_NUMBER,
       status: typeof m.Status === 'string' ? m.Status : 'Unknown'
     })
   }

@@ -46,11 +46,11 @@ export function SelectionPills({
       </div>
       <ul className="pill-list">
         {shown.map((obj) => (
-          <li key={obj} className="pill">
-            <span className="pill-label">{obj}</span>
+          <li key={obj} className="sel-pill">
+            <span className="sel-pill-label">{obj}</span>
             {!readOnly && onRemove && (
               <button
-                className="pill-remove"
+                className="sel-pill-remove"
                 aria-label={`Remove ${obj}`}
                 title={`Remove ${obj}`}
                 onClick={() => onRemove(obj)}
@@ -62,7 +62,7 @@ export function SelectionPills({
         ))}
         {hidden > 0 && (
           <li>
-            <button className="pill pill-more" onClick={() => setExpanded(!expanded)}>
+            <button className="sel-pill sel-pill-more" onClick={() => setExpanded(!expanded)}>
               {expanded ? 'Show fewer' : `+${hidden} more`}
             </button>
           </li>

@@ -160,9 +160,9 @@ describe('WizardShell', () => {
   it('renders the draft header + full step nav for a Draft', async () => {
     renderWizard('orgs')
     expect(await screen.findByRole('heading', { name: 'Acme' })).toBeInTheDocument()
-    expect(screen.getByText('srcbox → sb1 · Draft')).toBeInTheDocument()
+    expect(screen.getByText(/srcbox → sb1 · Draft/)).toBeInTheDocument()
     // All 7 steps reachable for a Draft.
-    for (const label of ['Orgs', 'Templates', 'Scope', 'Readiness', 'Mappings', 'Fields', 'Summary', 'Plan']) {
+    for (const label of ['Orgs', 'Objects', 'Scope', 'Readiness', 'Mappings', 'Fields', 'Stages', 'Summary', 'Plan']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
     }
   })
@@ -172,7 +172,7 @@ describe('WizardShell', () => {
     expect(await screen.findByText('9 deployable')).toBeInTheDocument()
     expect(screen.getByText('3 source-only (excluded)')).toBeInTheDocument()
     expect(screen.getByText('1 target-only')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Next: templates/ })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Next: Objects/ })).toBeEnabled()
   })
 
   it('shows a not-found message for a missing draft', async () => {
@@ -324,7 +324,7 @@ describe('StepOrgs gate', () => {
     })
     renderWizard('orgs')
     await screen.findByText('0 deployable')
-    expect(screen.getByRole('button', { name: /Next: templates/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Next: Objects/ })).toBeDisabled()
     expect(screen.getByText(/share no deployable objects/)).toBeInTheDocument()
   })
 
@@ -395,7 +395,7 @@ describe('StepObjects (Step 2)', () => {
     await screen.findByRole('heading', { name: 'Choose objects' })
 
     // Nothing selected → Next disabled.
-    expect(screen.getByRole('button', { name: /Next: scope/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Next: Scope/ })).toBeDisabled()
 
     await user.click(screen.getByText('Account'))
     await waitFor(() =>
@@ -411,7 +411,7 @@ describe('StepObjects (Step 2)', () => {
     // draftSave the previous waitFor observed, so a synchronous assertion here
     // races the render and fails intermittently.
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Next: scope \(1 selected\)/ })).toBeEnabled()
+      expect(screen.getByRole('button', { name: /Next: Scope \(1 selected\)/ })).toBeEnabled()
     )
   })
 
@@ -426,7 +426,7 @@ describe('StepObjects (Step 2)', () => {
 
     // Save is refused with an empty selection: a template that deselects
     // everything on apply is a footgun, not a preset.
-    await user.type(screen.getByLabelText('Objects template name'), 'DM Core')
+    await user.type(screen.getByLabelText('Objects preset name'), 'DM Core')
     expect(screen.getByRole('button', { name: 'Save as' })).toBeDisabled()
 
     await user.click(screen.getByText('Account'))
@@ -451,7 +451,7 @@ describe('StepObjects (Step 2)', () => {
     await user.click(screen.getByText('Account'))
     await waitFor(() => expect(screen.getByRole('button', { name: /1 selected/ })).toBeEnabled())
 
-    await user.selectOptions(screen.getByLabelText('Saved objects template'), '90')
+    await user.selectOptions(screen.getByLabelText('Saved objects preset'), '90')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
     // REPLACE, not merge — otherwise a template could only ever grow the
@@ -484,7 +484,7 @@ describe('StepObjects (Step 2)', () => {
     } as Template)
     renderWizard('objects')
     await screen.findByRole('heading', { name: 'Choose objects' })
-    await user.selectOptions(screen.getByLabelText('Saved objects template'), '92')
+    await user.selectOptions(screen.getByLabelText('Saved objects preset'), '92')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
     const note = await screen.findByText(/can never carry the External Id field and was dropped/)
     expect(note.textContent).toContain('CampaignMemberStatus')
@@ -513,7 +513,7 @@ describe('StepObjects (Step 2)', () => {
     renderWizard('objects')
     await screen.findByRole('heading', { name: 'Choose objects' })
 
-    await user.selectOptions(screen.getByLabelText('Saved objects template'), '91')
+    await user.selectOptions(screen.getByLabelText('Saved objects preset'), '91')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
     const note = await screen.findByText(/not deployable in both orgs and dropped/)
@@ -540,7 +540,7 @@ describe('StepObjects (Step 2)', () => {
     await user.click(screen.getByText('Contact'))
     await waitFor(() => expect(screen.getByRole('button', { name: /2 selected/ })).toBeEnabled())
 
-    await user.selectOptions(screen.getByLabelText('Saved objects template'), '92')
+    await user.selectOptions(screen.getByLabelText('Saved objects preset'), '92')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
     // Apply routes through setSelected, so Contact's WHERE clause cannot
@@ -682,7 +682,7 @@ describe('WizardShell — S61 U-5 keyless drafts have no Readiness step', () => 
     renderWizard('readiness')
     expect(await screen.findByRole('heading', { name: 'Acme' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Readiness' })).toBeNull()
-    for (const label of ['Orgs', 'Templates', 'Objects', 'Scope', 'Mappings', 'Fields', 'Summary', 'Plan']) {
+    for (const label of ['Orgs', 'Objects', 'Scope', 'Mappings', 'Fields', 'Stages', 'Summary', 'Plan']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
     }
     expect(await screen.findByRole('heading', { name: 'Mappings' })).toBeInTheDocument()
@@ -704,7 +704,7 @@ describe('WizardShell — S62 (U-2) Templates step', () => {
     expect(await screen.findByRole('heading', { name: 'Templates to run with this deployment' })).toBeInTheDocument()
     expect(await screen.findByText(/No runnable templates yet/)).toBeInTheDocument()
     expect(screen.getByTestId('stage-sequence')).toHaveTextContent('1. Data deployment')
-    expect(screen.getByRole('button', { name: 'Next: choose objects' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Next: Summary' })).toBeEnabled()
   })
   it('placing a post-refresh template BEFORE the data persists its steps (automation + embedded seeds) and updates the run order', async () => {
     installStub({ draft: draft({ step: 'templates' }), intersection: { objects: [], common: 1, sourceOnly: 0, targetOnly: 0 }, runnable: summaries })
@@ -716,6 +716,8 @@ describe('WizardShell — S62 (U-2) Templates step', () => {
     expect(screen.queryByTestId('template-stage-9')).toBeNull()
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'When to run LD dev sandbox' }), 'before')
     await waitFor(() => expect(screen.getByTestId('stage-sequence')).toHaveTextContent('1. LD dev sandbox → 2. Data deployment'))
+    // S64 P5 (5.6e): config saves are debounced — wait for the write, don't read it synchronously.
+    await waitFor(() => expect(saved.length).toBeGreaterThan(0))
     const last = saved[saved.length - 1]!.config as { templateSteps?: { before: Array<{ templateId: number; kind: string; steps: { automation: boolean; seeds: Array<{ name: string; groups: string[] }> } }>; after: unknown[] } }
     expect(last.templateSteps!.before).toHaveLength(1)
     expect(last.templateSteps!.before[0]).toMatchObject({ templateId: 4, kind: 'postRefresh', steps: { automation: true, seeds: [{ name: 'LD CPQ configuration', groups: ['cpq'] }] } })
@@ -724,8 +726,10 @@ describe('WizardShell — S62 (U-2) Templates step', () => {
     expect(screen.getByTestId('template-stage-4')).toHaveTextContent(/Triggers Disabled/)
     // Unticking the embedded seed removes it from the stage's steps.
     await userEvent.click(within(screen.getByTestId('template-stage-4')).getByRole('checkbox', { name: /Seed: LD CPQ configuration/ }))
-    const last2 = saved[saved.length - 1]!.config as { templateSteps: { before: Array<{ steps: { seeds: unknown[] } }> } }
-    expect(last2.templateSteps.before[0]!.steps.seeds).toEqual([])
+    await waitFor(() => {
+      const last2 = saved[saved.length - 1]!.config as { templateSteps: { before: Array<{ steps: { seeds: unknown[] } }> } }
+      expect(last2.templateSteps.before[0]!.steps.seeds).toEqual([])
+    })
     // "Not used" takes it out again.
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'When to run LD dev sandbox' }), 'none')
     await waitFor(() => expect(screen.getByTestId('stage-sequence')).toHaveTextContent('1. Data deployment'))

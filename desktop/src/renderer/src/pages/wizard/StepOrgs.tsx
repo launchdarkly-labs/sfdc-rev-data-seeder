@@ -1,6 +1,8 @@
 import { deploymentRoleIssues, describeAssignment } from '../../../../shared/roles'
+import { nextLabel } from '../../../../shared/wizard'
 import { useIpcMutation, useIpcQuery } from '../../ipc/hooks'
 import { useToast } from '../../ui/Toast'
+import { Loading } from '../../ui/Loading'
 import { useWizard } from './WizardShell'
 
 /**
@@ -77,7 +79,7 @@ export function StepOrgs(): React.JSX.Element {
         </div>
       )}
 
-      {loading && <p className="muted">Comparing schemas…</p>}
+      {loading && <Loading label="Comparing schemas…" />}
       {error && (
         <div className="banner">
           {error.message}{' '}
@@ -102,9 +104,9 @@ export function StepOrgs(): React.JSX.Element {
             <button
               className="btn primary"
               disabled={data.common === 0}
-              onClick={() => goToStep('templates')}
+              onClick={() => goToStep('objects')}
             >
-              Next: templates
+              {nextLabel('objects')}
             </button>
           </div>
           {data.common === 0 && (

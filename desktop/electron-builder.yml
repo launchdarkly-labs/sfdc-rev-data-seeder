@@ -1,7 +1,11 @@
-# RDS Desktop packaging (A1/E7.1) — INTERNAL distribution, ad-hoc signed.
-# Decision 2026-07-23 (ROADMAP log): no Apple Developer account, no notarization;
-# first open on another Mac is right-click → Open. Fuses are flipped and the
-# bundle ad-hoc signed in scripts/afterPack.cjs.
+# RDS Desktop packaging — the DEFAULT identity is ad-hoc (no Apple Developer ID):
+# signed with the hardened runtime by scripts/afterPack.cjs, NOT notarized. On
+# macOS 15/26 a first open goes through System Settings → Privacy & Security →
+# "Open Anyway" (the old right-click → Open bypass is gone).
+#
+# Developer ID / notarized builds use electron-builder.release.yml, which extends
+# this file and only turns `identity` and `notarize` on; with CSC_LINK set,
+# afterPack.cjs flips the fuses and leaves signing to electron-builder.
 appId: com.launchdarkly.rds-desktop
 productName: RDS Desktop
 directories:
@@ -9,21 +13,35 @@ directories:
 files:
   - out/**/*
   - package.json
+  # prebuild-install's download cache inside better-sqlite3; the runtime binary
+  # is build/Release/better_sqlite3.node (rebuilt per arch by electron-builder).
+  # The cache is identical in both halves of a universal build and breaks the merge.
+  - "!**/node_modules/better-sqlite3/bin/**"
 asar: true
 npmRebuild: true
 afterPack: ./scripts/afterPack.cjs
 mac:
   # identity null = electron-builder does NOT codesign; afterPack.cjs ad-hoc
-  # signs (with hardened runtime + entitlements) after the fuse flip so the
-  # seal covers the flipped framework.
+  # signs (with hardened runtime + the entitlements below) after the fuse flip so
+  # the seal covers the flipped framework. electron-builder.release.yml overrides
+  # this with a Developer ID Application identity.
   identity: null
+  # The SAME hardened-runtime + entitlements for either identity. afterPack.cjs
+  # reads `entitlements` from this config for its ad-hoc passes; electron-builder
+  # applies both keys itself when it signs with a real identity.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Gatekeeper assessment is meaningless without notarization; the release
+  # config turns notarization on instead.
+  gatekeeperAssess: false
+  notarize: false
   category: public.app-category.developer-tools
-  # Apple Silicon only (the LD architect fleet). Rosetta does not translate
-  # arm64→x86_64, so an Intel Mac cannot open an arm64-only build. Revisit with
-  # a universal build (per-arch better-sqlite3 prebuilds) only if an Intel
-  # laptop enters the fleet.
+  minimumSystemVersion: "13.0"
+  # Universal (arm64 + x64) since 0.4.0 so Intel Macs can run the public build.
+  # better-sqlite3 ships prebuilds for both; electron-builder lipo-merges the .node.
   target:
     - target: dmg
-      arch: [arm64]
+      arch: [universal]
 dmg:
   writeUpdateInfo: false

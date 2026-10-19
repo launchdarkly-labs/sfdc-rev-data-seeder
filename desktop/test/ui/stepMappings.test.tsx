@@ -163,8 +163,14 @@ describe('StepMappings (5B.5)', () => {
     renderMappings()
     await expandOpportunity()
     await waitFor(() => expect(screen.getByText('AccountId')).toBeInTheDocument())
-    // ParentOpp__c (self) + CaseLink__c (out of scope) are both locked.
-    expect(screen.getAllByText(/Skip 🔒/)).toHaveLength(2)
+    // ParentOpp__c (self) + CaseLink__c (out of scope) are both locked (ux T-9:
+    // a short badge, with the policy's full reason behind a "why" disclosure).
+    expect(screen.getAllByText(/^Locked · /)).toHaveLength(2)
+    expect(screen.getByText('Locked · self-reference')).toBeInTheDocument()
+    expect(screen.getByText('Locked · parent not in deployment')).toBeInTheDocument()
+    expect(screen.getAllByText('Skipped on deploy — why?')).toHaveLength(2)
+    expect(screen.getByText('Self-reference (auto-skip)')).toBeInTheDocument()
+    expect(screen.getByText('Ref → Case (not in deployment)')).toBeInTheDocument()
     // Only the two resolvable refs (AccountId, OwnerId) get a strategy dropdown.
     const strategySelects = screen
       .getAllByRole('combobox')
@@ -617,7 +623,7 @@ describe('StepMappings — S57 B1 target-keyed out-of-scope refs', () => {
       'skip'
     ])
     // Only the self-ref stays locked now.
-    expect(screen.getAllByText(/Skip 🔒/)).toHaveLength(1)
+    expect(screen.getAllByText(/^Locked · /)).toHaveLength(1)
     expect(screen.getByTestId('target-key-CaseLink__c')).toHaveTextContent(
       /resolves against RDS-keyed Case rows already on the target/
     )

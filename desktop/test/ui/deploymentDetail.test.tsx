@@ -16,6 +16,7 @@ import {
   STALLED_NEXT_STEP,
   STALLED_TEARDOWN_MESSAGE
 } from '../../src/shared/recoveryCopy'
+import { GLOSSARY, PRE_RUN_PHASES } from '../../src/shared/labels'
 
 /**
  * S46 D5-min — the deployment detail page. The first live deploy failed with
@@ -210,10 +211,18 @@ describe('DeploymentDetailPage — live run', () => {
     renderAt()
     expect(await screen.findByRole('heading', { name: 'gpr test' })).toBeInTheDocument()
     expect(screen.getByRole('progressbar')).toBeInTheDocument()
-    // KPIs
-    expect(screen.getByText('deployed').previousSibling!.textContent).toBe('5')
-    expect(screen.getByText('failed').previousSibling!.textContent).toBe('1')
+    // KPIs — T-8: planned first, Title Case, each tile explains itself.
+    const labels = screen.getAllByText(/./, { selector: '.kpi-label' }).map((el) => el.textContent)
+    expect(labels).toEqual(['Planned', 'Queried', 'Deployed', 'Failed', 'Skipped'])
+    expect(screen.getByText('Deployed', { selector: '.kpi-label' }).previousSibling!.textContent).toBe('5')
+    expect(screen.getByText('Failed', { selector: '.kpi-label' }).previousSibling!.textContent).toBe('1')
+    expect(screen.getByText('Skipped', { selector: '.kpi-label' }).closest('.kpi')).toHaveAttribute('title', GLOSSARY.skipped)
     expect(screen.getByText('current')).toBeInTheDocument()
+    // F-6: the current row is highlighted and carries a mini deployed/planned bar; the card says when it last read.
+    const contactRow = screen.getByText('current').closest('tr')!
+    expect(contactRow).toHaveClass('current')
+    expect(contactRow).toHaveTextContent('5 / 12')
+    expect(screen.getByTestId('last-updated')).toHaveTextContent(/updated \d+s ago/)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(cancelled).toEqual(['job-3'])
@@ -436,7 +445,7 @@ describe('DeploymentDetailPage — S47 review fixes', () => {
     })
     renderAt()
     expect(await screen.findByText(/1 record\(s\) still failed after retries/)).toBeInTheDocument()
-    expect(document.body.textContent).toMatch(/failed_records/)
+    expect(document.body.textContent).toMatch(/Export failure list/)
     expect(document.body.textContent).not.toMatch(/see the run log/)
   })
 })
@@ -607,7 +616,9 @@ describe('DeploymentDetailPage — the run tail (UI-4)', () => {
     hydrateRunning()
     renderAt()
     await screen.findByRole('heading', { name: 'gpr test' })
-    expect(screen.getByText(/phase: RestoringAutomation/)).toBeInTheDocument()
+    // T-4: the engine's phase name goes through phaseLabel(); the raw value stays in `title`.
+    expect(screen.getByText(/phase: Restoring automation/)).toHaveAttribute('title', 'RestoringAutomation')
+    expect(document.body.textContent).not.toMatch(/RestoringAutomation/)
     expect(document.body.textContent).not.toMatch(/SBQQ__Subscription__c \(second pass\)/)
 
     cleanup()
@@ -779,7 +790,7 @@ describe('DeploymentDetailPage — S62 stages strip + already-on-target', () => 
     })
     renderAt()
     await screen.findByRole('heading', { name: 'gpr test' })
-    expect(screen.getByText('already on target', { selector: '.kpi-label' })).toBeInTheDocument()
+    expect(screen.getByText('Already on target', { selector: '.kpi-label' })).toBeInTheDocument()
     const rows = screen.getAllByRole('row') as HTMLTableRowElement[]
     const acc = rows.find((r) => r.textContent?.includes('Account') && !r.textContent?.includes('Opportunity'))!
     expect(acc.cells[4]).toHaveTextContent('17 (17 already on target)')
@@ -802,8 +813,8 @@ describe('DeploymentDetailPage — S63 text-Id relinks', () => {
     })
     renderAt()
     await screen.findByRole('heading', { name: 'gpr test' })
-    expect(screen.getByText('relinked', { selector: '.kpi-label' }).previousSibling).toHaveTextContent('103')
-    expect(screen.getByText('unresolved Ids', { selector: '.kpi-label' }).previousSibling).toHaveTextContent('2')
+    expect(screen.getByText('Relinked', { selector: '.kpi-label' }).previousSibling).toHaveTextContent('103')
+    expect(screen.getByText('Unresolved Ids', { selector: '.kpi-label' }).previousSibling).toHaveTextContent('2')
     const table = screen.getByTestId('relinks')
     expect(table).toHaveTextContent('SBQQ__Subscription__c.SBQQ__RequiredById__c')
     expect(table).toHaveTextContent('SBQQ__Quote__c.SBQQ__PricebookId__c')
@@ -824,6 +835,63 @@ describe('DeploymentDetailPage — S63 text-Id relinks', () => {
     renderAt()
     await screen.findByRole('heading', { name: 'gpr test' })
     expect(screen.queryByTestId('relinks')).not.toBeInTheDocument()
-    expect(screen.queryByText('relinked', { selector: '.kpi-label' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Relinked', { selector: '.kpi-label' })).not.toBeInTheDocument()
+  })
+})
+
+describe('DeploymentDetailPage — S64 P3 feedback (F-3 pre-run checklist, F-5 cancel helper, T-5 legend)', () => {
+  const hydrateRunning = (): void =>
+    act(() =>
+      useJobsStore.getState().hydrate([
+        { id: 'job-pre', kind: 'deploy', title: 'Deploy data', deploymentId: '4', status: 'running', startedAt: 0 }
+      ])
+    )
+
+  it('a live job with no run row yet shows the pre-run phases as a checklist', async () => {
+    state = base({ deployment: { ...base().deployment, status: 'Deploying' } })
+    hydrateRunning()
+    renderAt()
+    const list = await screen.findByTestId('prerun-phases')
+    for (const p of PRE_RUN_PHASES) expect(list).toHaveTextContent(p)
+    // The "interrupted" banner is for a busy status WITHOUT a live job — not this case.
+    expect(screen.queryByText(/no deploy job is running in this session/)).toBeNull()
+  })
+
+  it('once the run row exists the checklist is gone and Cancel explains itself in visible text', async () => {
+    state = base({
+      deployment: { ...base().deployment, status: 'Deploying' },
+      run: { id: 7, phase: 'Deploying', currentObject: 'Account', currentPass: 'first', cancelRequested: false, teardownOutcome: null, startedAt: 10, finishedAt: null },
+      counters: { recordsQueried: 1, recordsDeployed: 0, recordsFailed: 0, recordsSkipped: 0 }
+    })
+    hydrateRunning()
+    renderAt()
+    await screen.findByRole('button', { name: 'Cancel' })
+    expect(screen.queryByTestId('prerun-phases')).toBeNull()
+    expect(screen.getByText(/Stops at the next batch, then restores automation/)).toBeInTheDocument()
+  })
+
+  it('teardown: the withdrawn Cancel says why in visible text, not only in title', async () => {
+    state = base({
+      deployment: { ...base().deployment, status: 'Restoring Automation' },
+      run: { id: 7, phase: 'RestoringAutomation', currentObject: null, currentPass: null, cancelRequested: false, teardownOutcome: null, startedAt: 10, finishedAt: null },
+      counters: { recordsQueried: 1, recordsDeployed: 1, recordsFailed: 0, recordsSkipped: 0 }
+    })
+    hydrateRunning()
+    renderAt()
+    await screen.findByRole('button', { name: /Restoring — cannot cancel/ })
+    expect(screen.getByText(/interrupting it is the one thing that could leave the target disabled/)).toBeInTheDocument()
+  })
+
+  it('a junction row carries the glossary title and the page shows one legend line', async () => {
+    state = base({
+      objects: [
+        { objectName: 'Account', sortOrder: 0, isJunction: false, recordCount: 1, recordsQueried: 0, recordsDeployed: 0, recordsFailed: 0, recordsSkipped: 0 },
+        { objectName: 'OpportunityContactRole', sortOrder: 1, isJunction: true, recordCount: 3, recordsQueried: 0, recordsDeployed: 0, recordsFailed: 0, recordsSkipped: 0 }
+      ]
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'gpr test' })
+    expect(screen.getByTitle(GLOSSARY.junction)).toHaveTextContent('junction')
+    expect(screen.getByText(GLOSSARY.junction, { exact: false, selector: '.legend' })).toBeInTheDocument()
   })
 })

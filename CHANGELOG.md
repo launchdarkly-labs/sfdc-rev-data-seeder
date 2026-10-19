@@ -1,5 +1,189 @@
 # Changelog
 
+## 0.4.0 — 2026-10-19 (S64–S67: polish pass — platform, design tokens, first-run UX, branding, measured performance)
+
+### Platform (P0)
+- **Electron 37 → 44** (37 had been end-of-life since 2026-01-15). Minimum macOS is now 13 (Ventura).
+- **Universal macOS build** (arm64 + x64) so Intel Macs can run the public DMG.
+- Dependency refresh: react-router-dom, @jsforce/jsforce-node and the in-range transitives; dev toolchain to vitest 5,
+  electron-vite 6 and @electron/rebuild 4, clearing every critical `npm audit` finding. `.github/dependabot.yml` added.
+- `engines.node >= 22` + `.nvmrc`; renderer CSP adds `object-src 'none'; base-uri 'none'; frame-ancestors 'none'`.
+
+### Design tokens + accessibility floor (P1)
+- **Token layer.** `:root` now declares every colour, tint (via `color-mix`), type size, radius, shadow and z-index the
+  stylesheet uses; hard-coded values were replaced throughout. A `[data-theme="light"]` block redefines the colour tokens
+  only (opt-in; no automatic switch yet).
+- **Links and native controls** follow the dark scheme (`color-scheme: dark`, `a { color }`): deployment names, Details /
+  Open plan and in-text links were browser-default blue on near-black (2.0:1).
+- **Keyboard focus** is visible app-wide (`:focus-visible` ring; no `outline: none` left). Primary and danger buttons use
+  darker fills so their labels pass AA; nothing renders below 12px.
+- **Type scale:** body 13px / 1.45; `h2` 15px, `h3` 13px (section headings were the browser's 24px); How To uses a `.prose`
+  measure at 14px / 1.6.
+- **CSS hygiene:** rules for the 17 classes that had none (`banner info` no longer renders red; `p.error` is red; the
+  OAuth/CLI pills are tinted), the S49 selection pill renamed `.sel-pill` so it stops restyling the status `.pill`,
+  dead `.chip` / `.sidebar button` rules removed, generic aliases `.table` / `.select` / `.input-sm` / `.check` added,
+  inline styles moved into classes. Wide tables scroll inside `.table-wrap` instead of clipping. Window minimum 1024×680.
+- **New tests:** `cssClasses.test.ts` (every className in the renderer has a selector — the five-time gotcha now has an
+  automated check; also guards color-scheme, the focus ring and the 12px floor) and `tokens.test.ts` (WCAG contrast of the
+  declared tokens in both themes; no stray hex outside the token blocks).
+
+### First-run and safety fixes (P2)
+- **Re-run guard.** On a Completed / Failed / Cancelled deployment the Plan step says what deploying again does (keyed:
+  rows already on the target are updated in place; keyless: anything the id map does not know lands again), the button
+  reads **Re-run deploy**, and a confirmation is asked first. Before, a finished deployment showed a live "Deploy" button
+  with no sign it would re-run.
+- **First run.** Home shows a three-step getting-started checklist while there are no orgs and no deployments; New
+  Deployment with no connected org points at Connections instead of two empty selects; `/welcome` is a real page; the
+  old `/extids`, `/history` and `/tools` stubs redirect Home; Not found links back.
+- **Salesforce CLI missing** is reported as guidance (install link, `sf org login web -a <alias>`, Refresh) instead of
+  `spawn sf ENOENT` — a new `CLI_MISSING` error code.
+- **Wizard order and labels.** Stages (formerly the "Templates" step) moves after Fields; one shared `STEP_LABELS`
+  table drives the step nav, the "Next: …" buttons and the How To list; the header shows "Step N of M" and a
+  breadcrumb back to Deployments (and to the monitor once the deployment has run). The wizard's saved
+  objects / mappings / fields selections are now called **presets**, so "Templates" means the two runnable kinds.
+- **Templates › Rename** works: a modal with a text field replaces `window.prompt`, which Electron does not implement.
+- **Deployment page copy** no longer names database tables; failed rows can be exported as JSON
+  (**Export failure list**) through a save dialog.
+- **Analysis** can be cancelled where it runs, and its bar is indeterminate until the engine reports a total.
+- **Connections** gets a filter (alias / username), a "Hide unassigned" toggle and a count; a failed Verify shows its
+  full reason in an expandable row.
+- Tests: `p2FirstRun.test.tsx` (re-run guard, breadcrumb and step count, no-orgs banner, CLI-missing banner, filter,
+  rename modal, welcome checklist).
+
+### Consistency, copy and feedback (P3)
+- **Navigation:** Deployments (lit on every `/deployments/*` page), Templates, Connections, How To. "New deployment" is
+  the Deployments page's primary button. The sidebar footer is a plain "Idle" when nothing runs and a "N jobs running"
+  button with a popover (title, phase, Cancel) when something does.
+- **Deployments page** (was Home): one activity list with a kind badge (Deployment / Template run / Analysis), one status
+  vocabulary in Title Case (`shared/labels.ts`), one primary action per status (Continue · Review plan · Monitor · View
+  report) and a "…" menu for the rest; a running job attaches to its deployment card; long errors collapse to one line
+  with Show more.
+- **Plan step pre-flight card** replaces six stacked banners: one row per gate (automation scan · CPQ "Triggers Disabled"
+  confirmation · objects that will fail · readiness · relink · stages), each with a state glyph and expandable detail;
+  the automation table is collapsed under its row.
+- **Shared components:** `EmptyState`, `Loading` (spinner + label, used on Orgs, Objects, Mappings, Fields with
+  "n / N" counters), `CancelJobButton` (visible helper text, used on the monitor and template reports); one `.table`
+  base replaces four duplicate table styles; bare `<select>` / `<input>` elements match the app's inputs.
+- **Copy pass:** "External Id" everywhere, API names only once in `<code>`; engine phases shown as words ("Restoring
+  automation"); junction / keyless / confirmation terms carry a one-line glossary tooltip and a legend per page; KPIs
+  reordered and titled; report columns get units; long cautions are a one-sentence lead with "Learn more"; roadmap ids
+  removed from the UI; "Production orgs are pinned read-only" instead of a company name.
+- **Feedback:** toasts have a close button, errors announce as alerts, at most three show at once; Readiness provisioning
+  ticks per object; the monitor lists the pre-run phases before the first engine event, highlights the current object with
+  a per-row progress bar and an "updated Ns ago" stamp; the template run log auto-scrolls (pause on hover), says it shows
+  the last 400 lines, and can filter to errors and warnings; disabled Next buttons say why in visible text.
+- **Templates page rows:** Run (or Rename for presets) plus a "…" menu instead of six buttons; Last run shows a status
+  badge and a relative time.
+- **Accessibility:** sortable headers are buttons; the modal traps and returns focus and is labelled by its heading;
+  decorative glyphs are hidden from screen readers; the filter row's remove button is outside its label; SeedBuilder
+  tabs are a complete tab pattern with arrow keys; reasons that lived only in `title` are visible text.
+- Tests: `p3Components`, `p3NavShell`, `p3HomeActivity`, `p3PlanPreflight` plus updates across the step and page suites
+  (1,800 pure · 160 sqlite).
+
+### Branding (P4)
+- **Look:** true graphite neutrals with one warm amber accent for the brand and primary actions (dark text on it, ≈ 9:1);
+  warnings move to a cooler yellow in an outlined style so the accent never reads as a warning; cards lift by shadow
+  instead of border. Inter (UI) and JetBrains Mono (API names) are bundled as Latin woff2 files; the base size is 14px
+  on a 1.25 scale.
+- **Mark and icon:** an amber tile with a seed-into-arrow mark in the sidebar with the version, in the window title, and as
+  the app icon (`build/icon.icns`); a small inline SVG icon set for the nav and the pre-flight states. "by LaunchDarkly
+  Labs · MIT" in the sidebar footer.
+- **Light theme + Settings page.** Settings (new nav item) offers Match the system / Dark / Light, persisted through a
+  new allow-listed `settingsGet` / `settingsSet` IPC pair (`pref.theme`), applied before first paint; the page also states
+  the version, where the data lives, and how org sign-ins work.
+- Fixed three tokens that referenced themselves since P1 (`--backdrop`, `--shadow-modal`, `--font-mono`), which had
+  disabled the modal backdrop and the monospace font; the token test now rejects self-references.
+- Tests: `p4Theme.test.tsx` (theme resolution and persistence, Settings page, icon accessibility).
+
+### Performance — measured first, then the safe wins (P5)
+- **Run timings are now persisted** (migration 014). Every phase transition of a run — the pre-run connect / gates /
+  freeze / audit steps as well as the engine's own phases — is stamped in a `run_phases` table, and the peak working
+  set per Electron process over the run is written to the run row when the job ends. Until now the only durable
+  timestamps were a run's start and finish and each record's attempt time; restore, finalize, audit and relink
+  durations disappeared with the job and no memory number survived anywhere. The Deployment page shows the
+  breakdown as a per-phase duration strip, with the peak-memory line beneath it. Engine throughput changes
+  (parallel automation toggles, scoped PricebookEntry prefetch, write pipelining) are deferred to 0.4.1 so they can
+  be judged against these numbers from a live run instead of reconstructed from attempt-time gaps.
+- **One describe per object per run.** The plan freeze, every object context (including each 150-id retry chunk),
+  the second pass and the text-Id relink each re-described both orgs — roughly 65 describes of 230–280 KB per
+  11-object run. They now share one memo for the life of the attempt (a failed describe is retried, never pinned);
+  the job log ends with `Describes this run: N fetched from the orgs, M served from the run cache.`
+- **Counter reads are run-scoped.** The counter views' `WHERE run_id = ?` could not enter their materialised CTEs, so
+  every read scanned every run ever written (50–90 ms per call on a 47k-row store, growing with history, twice per
+  monitor refresh). The reads now carry the run id inside the CTEs: 68 → 23 ms for the largest run, 31 → 3 ms for a
+  small one, and flat (133 → 1 ms) on a store four times larger. Rows are identical to the views, which stay as the
+  oracle. The one missing index found by EXPLAIN (`automation_ledger_mirror(run_uuid, restore_confirmed)`) was added.
+- **Smaller job events.** The first-pass strategy line carried the full dropped-field list (up to 32 KB) as detail on
+  every 2,000-record page; it is capped at 2,000 characters (the full list is in the frozen plan). The renderer's job
+  store no longer rebuilds its state on `log` events, so pages subscribed to a running job stop re-rendering once
+  per log line; the deployment cards, mapping rows and seed-report rows are memoised.
+- **One refresh path on the monitor pages.** The Deployment page and the template run report each refreshed their
+  persisted snapshot from two independent timers with no in-flight guard, so reads overlapped on the main thread and
+  a slow earlier response could overwrite a newer one. Both now go through one guarded path: at most one read in
+  flight plus one trailing read, responses applied in order, a stale response dropped; the event-driven refresh stays
+  the fast path and the 3 s poll the floor while a job runs. The run report's live log appends in place and renders
+  once per burst of lines instead of once per line.
+- **Wizard describes are fetched once.** Scope, Mappings and Fields each re-pulled every object's describe from both
+  orgs on entry (N=11 ≈ 22 round-trips of 200–280 KB per step). One cache per open wizard now serves all three steps
+  (24 → 6 describes on a three-object Scope → Mappings → Fields → Scope walk; a failed describe is retried, never
+  pinned). The Fields step describes all objects in parallel while keeping its per-object progress count, and its
+  per-field exclusion checks use a set per object instead of scanning the exclusion list for every field (the
+  "Exclude all" case on a 500-field object was a quarter-million comparisons per keystroke). Draft saves from the
+  wizard are debounced to half a second, flushed at once when you change step or leave the wizard.
+
+### Compatibility and first-run docs (P6)
+- **README prerequisites and install.** The root README now states what a first-time user needs before anything
+  else: Apple Silicon or Intel (the DMG is universal), macOS 13+, Salesforce CLI `sf` 2.136+ with
+  `sf org login web -a <alias>`, the macOS 15/26 **Open Anyway** steps (the right-click → Open bypass no longer
+  exists), where the SQLite database lives (`~/Library/Application Support/rds-desktop/rds-desktop.db`), what keyed
+  mode creates on a target (the External Id field + the `RDS_Deployment_Access` permission set, both permanent), the
+  CPQ *Triggers Disabled* step that is the operator's to do, and that OAuth sign-in needs your own External Client
+  App. Contributor notes cover npm ≥ 11.19 (`npm install-scripts approve electron esbuild better-sqlite3`) and the
+  Node/Electron ABI dance. `desktop/README.md` gains a **Releasing** checklist (lanes → local DMG proven live →
+  bundle checks → tag → what the Release page must say → second-Mac Open Anyway walk). The OAuth runbook is
+  genericised: create the ECA in a home org of your own, distribute it or not, hand the key to the build via
+  `.env.local`. The Settings page now names the real data folder (it said `RDS Desktop/`; the folder is the package
+  name `rds-desktop/`).
+- **One API version.** The nine `v66.0` literals in the engine (REST root, Tooling root, Tooling query / sobject
+  prefixes, the UI-API picklist endpoint, a Tooling `ApiVersion` fallback) now derive from `shared/apiVersion.ts`
+  (`API_VERSION`, `DATA_API_PATH`, `TOOLING_API_PATH`, …); `services/salesforce.ts` re-exports the constant. The
+  version is shown on Settings › About and in the How To. `test/apiVersion.test.ts` fails the build if a literal
+  version path or bare version string reappears under `src/` (comments excluded).
+- **Production pin as a runtime setting** (decision D6). The pin that makes an org read-only and never a target was
+  a compiled constant, so another team's production org was unprotected until they rebuilt the app. It is now
+  `settings.pref.prodOrgIdPrefix`, edited on the Connections page (**Production pin**: paste a 15- or 18-character
+  Org Id, Save, Reset to default); the compiled `PROD_ORG_ID_PREFIX` stays as the default and remains allow-listed
+  in the secret scanner. All three enforcement layers read the same resolver: the store's connection view (role
+  forced to source) and `setRole` refusal, the transport's write gate (the minted org id is re-checked against the
+  pin passed in at connect time), and the templates pre-flight blocker. A stored role survives underneath a pin and
+  reappears when the pin moves; an invalid stored value falls back to the default rather than pinning nothing. Error
+  and advisory text no longer names a company ("pinned production org"). Tests: `prodPin.test.ts`,
+  `prodPin.store.test.ts`, six Connections UI cases.
+- **Signing for either identity.** `scripts/afterPack.cjs` always flips the fuses, then ad-hoc signs inside-out
+  **only when `CSC_LINK` is unset**; with a Developer ID certificate it stops and electron-builder signs and
+  notarizes. The hardened runtime and `build/entitlements.mac.plist` are declared once in `electron-builder.yml`
+  (`hardenedRuntime`, `entitlements`, `entitlementsInherit`; the hook reads the same path), with
+  `minimumSystemVersion 13.0` and `notarize: false`; `electron-builder.release.yml` extends it and only sets
+  `identity: Developer ID Application` + `notarize: true`. New `.github/workflows/release.yml` (tag `v*` or manual):
+  the five lanes, a package-version-equals-tag check, ad-hoc or Developer ID packaging depending on whether the
+  `CSC_LINK` secret exists, bundle verification (`codesign --verify`, entitlements, `lipo`, fuses, `spctl` when
+  signed), and upload of the DMG + `SHA256SUMS.txt` to the GitHub Release. Not exercised in CI yet; the DMG rebuild
+  after P6 is the lead's step.
+- Tests: 1,860 pure · 175 sqlite (P6: +24 / +8).
+
+### Validated live before tagging
+- The installed universal DMG (asar `a6c1ad00`) ran one data-seed template into a fresh sandbox (39 objects, 4,778 rows,
+  parity 0 mismatches, 43 automation items disabled and restored) and two one-account deployments from the source sandbox
+  into two fresh sandboxes — keyless into one, keyed into the other (Readiness created the External Id field and the
+  permission set). Both: 192 planned, 191 deployed, 0 failed, 1 skipped (an OpportunityTeamMember unique-constraint
+  collision, a known platform artefact); 41 text-Ids relinked, 0 unresolved, 0 dangling on the org; all automation
+  restored. The S63 text-Id relink pass is live-proven in both modes with this release.
+- First `run_phases` numbers (one account, 191 rows): plan freeze 9 s in both modes; disabling automation 107–159 s and
+  restoring it 131–137 s; record writes 117 s keyless / 126 s keyed. The toggles are two thirds of the run; 0.4.1's
+  throughput work starts there.
+- **Not exercised:** a deployment with a template stage in front of it (the composed path from 0.3.1) and the
+  `release.yml` workflow, which runs for the first time on this tag.
+
 ## 0.3.1 — 2026-10-18 (S62 + S63: the second live pass on two fresh sandboxes → fixes, templates as deployment stages, text-Id relink)
 
 ### Templates as stages of a New Deployment (U-2)

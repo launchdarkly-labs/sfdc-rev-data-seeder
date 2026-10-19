@@ -53,9 +53,9 @@
  *    envelope, failing the WHOLE updateMetadata call — the batch counted 0
  *    (DRS:148-171). The desktop salvages the surviving records and counts
  *    them: a rule deleted between list and read no longer poisons its batch.
- *  - The SOAP transport itself (session header, envelope XML, /Soap/m/66.0)
- *    is jsforce's Metadata API client, pinned to the same v66.0 via
- *    services/salesforce API_VERSION.
+ *  - The SOAP transport itself (session header, envelope XML, /Soap/m/NN.N)
+ *    is jsforce's Metadata API client, pinned to the app-wide API_VERSION
+ *    (shared/apiVersion.ts) through the Connection's `version`.
  *
  * WORKFLOW-RULE SLICE (desktop-only extension — S32 decision, 2026-07-24; the
  * frozen Apex NEVER handled classic WorkflowRule): the S32-decided mechanism

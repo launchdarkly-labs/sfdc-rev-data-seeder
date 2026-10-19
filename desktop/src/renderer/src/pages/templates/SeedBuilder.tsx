@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { DeployableObject, FieldInfo } from '../../../../shared/types'
 import {
   BATCH_SIZE_DEFAULT,
@@ -6,9 +6,19 @@ import {
   BATCH_SIZE_MIN,
   DEFAULT_TIER_GROUP,
   SEED_HANDLERS,
+  type SeedHandler,
   type SeedTemplate,
   type SeedTier
 } from '../../../../shared/templates/types'
+import { GLOSSARY } from '../../../../shared/labels'
+
+/** Human labels for the seed handlers (ux T-10: the select used to show the schema key). */
+export const HANDLER_LABELS: Record<SeedHandler, string> = {
+  attachmentsViaJunction: 'Copy attachments through a junction'
+}
+
+type SeedTab = 'objects' | 'order' | 'settings'
+const SEED_TABS: readonly SeedTab[] = ['objects', 'order', 'settings']
 import { cpqConfigurationPreset } from '../../../../shared/templates/samples'
 import { callIpc, toRdsError } from '../../ipc/client'
 import { useIpcQuery } from '../../ipc/hooks'
@@ -32,7 +42,21 @@ interface Props {
  */
 export function SeedBuilder({ value, onChange, connectionId }: Props): React.JSX.Element {
   const toast = useToast()
-  const [tab, setTab] = useState<'objects' | 'order' | 'settings'>('objects')
+  const [tab, setTab] = useState<SeedTab>('objects')
+  // A-8: a complete tabs pattern — roving tabindex, arrow keys, aria-controls ↔ tabpanel.
+  const tabRefs = useRef<Record<SeedTab, HTMLButtonElement | null>>({ objects: null, order: null, settings: null })
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, key: SeedTab): void => {
+    const i = SEED_TABS.indexOf(key)
+    let next: SeedTab | undefined
+    if (e.key === 'ArrowRight') next = SEED_TABS[(i + 1) % SEED_TABS.length]
+    else if (e.key === 'ArrowLeft') next = SEED_TABS[(i - 1 + SEED_TABS.length) % SEED_TABS.length]
+    else if (e.key === 'Home') next = SEED_TABS[0]
+    else if (e.key === 'End') next = SEED_TABS[SEED_TABS.length - 1]
+    if (!next) return
+    e.preventDefault()
+    setTab(next)
+    tabRefs.current[next]?.focus()
+  }
   const [openTier, setOpenTier] = useState<string | null>(null)
   const [hints, setHints] = useState<Record<string, string[]>>({})
   const [suggesting, setSuggesting] = useState(false)
@@ -119,20 +143,34 @@ export function SeedBuilder({ value, onChange, connectionId }: Props): React.JSX
 
   return (
     <section className="seed-builder">
-      <div className="builder-tabs" role="tablist">
+      <div className="builder-tabs" role="tablist" aria-label="Seed template sections">
         {(
           [
             ['objects', `Objects (${selected.length})`],
-            ['order', `Order & tiers`],
+            ['order', 'Order & load groups'],
             ['settings', 'Settings']
           ] as const
         ).map(([key, label]) => (
-          <button key={key} role="tab" aria-selected={tab === key} className={`btn ${tab === key ? 'primary' : ''}`} onClick={() => setTab(key)}>
+          <button
+            key={key}
+            ref={(el) => {
+              tabRefs.current[key] = el
+            }}
+            id={`seed-tab-${key}`}
+            role="tab"
+            aria-selected={tab === key}
+            aria-controls={`seed-panel-${key}`}
+            tabIndex={tab === key ? 0 : -1}
+            className={`btn ${tab === key ? 'primary' : ''}`}
+            onClick={() => setTab(key)}
+            onKeyDown={(e) => onTabKey(e, key)}
+          >
             {label}
           </button>
         ))}
       </div>
 
+      <div role="tabpanel" id={`seed-panel-${tab}`} aria-labelledby={`seed-tab-${tab}`}>
       {tab === 'objects' && (
         <>
           <div className="toolbar">
@@ -140,7 +178,7 @@ export function SeedBuilder({ value, onChange, connectionId }: Props): React.JSX
               CPQ configuration preset
             </button>
             <span className="muted">
-              Adds the sample’s CPQ + Advanced Approvals objects, keep-Id set, deferred fields and placeholders. Pick any other
+              Adds the sample’s CPQ + Advanced Approvals objects, shared-Id set, deferred fields and placeholders. Pick any other
               object below.
             </span>
           </div>
@@ -159,19 +197,19 @@ export function SeedBuilder({ value, onChange, connectionId }: Props): React.JSX
             </button>
             <span className="muted">
               Parents before children from the read-from org’s lookups. Self and forward references defer to the second pass
-              automatically. Groups let part of a template run alone.
+              automatically. Load groups let part of a template run alone.
             </span>
           </div>
           {value.tiers.length === 0 && <p className="muted">No objects yet — pick them on the Objects tab.</p>}
           {value.tiers.length > 0 && (
-            <table className="orgs tiers-table" aria-label="Tiers">
+            <table className="orgs tiers-table" aria-label="Load order">
               <thead>
                 <tr>
                   <th>#</th>
                   <th>Object</th>
-                  <th>Group</th>
-                  <th>Batch</th>
-                  <th>Where</th>
+                  <th title={GLOSSARY.loadGroup}>Load group</th>
+                  <th title="Rows per save call (1–200); lower it when a trigger-heavy object only saves one row at a time">Batch size</th>
+                  <th title="Source rows to copy — a WHERE clause without the keyword">Where</th>
                   <th>Flags</th>
                   <th />
                 </tr>
@@ -196,11 +234,16 @@ export function SeedBuilder({ value, onChange, connectionId }: Props): React.JSX
               </tbody>
             </table>
           )}
-          {groups.length > 1 && <p className="muted">Groups: {groups.join(', ')}</p>}
+          {groups.length > 1 && (
+            <p className="muted">
+              Load groups: {groups.join(', ')} — {GLOSSARY.loadGroup}
+            </p>
+          )}
         </>
       )}
 
       {tab === 'settings' && <SeedSettings value={value} onChange={onChange} />}
+      </div>
     </section>
   )
 }
@@ -237,8 +280,8 @@ function TierRow({
   onTemplate: (next: SeedTemplate) => void
 }): React.JSX.Element {
   const flags: string[] = []
-  if (tier.handler) flags.push(tier.handler)
-  if (tier.pruneUnloadedUnder) flags.push('prune')
+  if (tier.handler) flags.push(HANDLER_LABELS[tier.handler])
+  if (tier.pruneUnloadedUnder) flags.push('prunes extras')
   if (tier.parentScope) flags.push('parent scope')
   const deferred = template.deferredFields[tier.object] ?? []
   if (deferred.length) flags.push(`${deferred.length} deferred`)
@@ -248,13 +291,13 @@ function TierRow({
         <td className="muted">{index + 1}</td>
         <td>
           <button className="btn subtle tier-name" onClick={onToggle} aria-expanded={open}>
-            {open ? '▾' : '▸'} {tier.object}
+            <span aria-hidden="true">{open ? '▾' : '▸'}</span> {tier.object}
           </button>
         </td>
         <td>
           <input
             className="map-matchfield"
-            aria-label={`Group for ${tier.object}`}
+            aria-label={`Load group for ${tier.object}`}
             value={tier.group ?? ''}
             placeholder={DEFAULT_TIER_GROUP}
             onChange={(e) => onPatch({ group: e.target.value.trim() || undefined })}
@@ -383,7 +426,7 @@ function TierDetail({
                   <input
                     className="map-matchfield"
                     aria-label={`Placeholder for ${f.apiName}`}
-                    placeholder="placeholder"
+                    placeholder="e.g. 0 or TBD"
                     value={template.deferredPlaceholders[f.apiName] == null ? '' : String(template.deferredPlaceholders[f.apiName])}
                     onChange={(e) => setPlaceholder(f.apiName, e.target.value)}
                   />
@@ -396,7 +439,7 @@ function TierDetail({
       </details>
 
       <details className="tier-section" open={tier.pruneUnloadedUnder != null}>
-        <summary>Prune auto-created children under a parent {tier.pruneUnloadedUnder ? '(on)' : ''}</summary>
+        <summary>Delete rows the target created on its own under a parent {tier.pruneUnloadedUnder ? '(on)' : ''}</summary>
         <div className="row-inputs">
           <select
             className="map-strategy"
@@ -493,7 +536,7 @@ function TierDetail({
       </details>
 
       <details className="tier-section" open={tier.handler != null}>
-        <summary>Handler {tier.handler ? `(${tier.handler})` : ''}</summary>
+        <summary>Special handling {tier.handler ? `(${HANDLER_LABELS[tier.handler]})` : ''}</summary>
         <div className="row-inputs">
           <select
             className="map-strategy"
@@ -510,7 +553,7 @@ function TierDetail({
             <option value="">— none —</option>
             {SEED_HANDLERS.map((h) => (
               <option key={h} value={h}>
-                {h}
+                {HANDLER_LABELS[h]}
               </option>
             ))}
           </select>
@@ -544,7 +587,7 @@ function TierDetail({
               </select>
             </>
           )}
-          <span className="muted">attachmentsViaJunction copies the classic Attachment a junction row points at, then the row.</span>
+          <span className="muted">Copies the classic Attachment a junction row points at, then the row itself.</span>
         </div>
       </details>
     </div>
@@ -555,6 +598,10 @@ function SeedSettings({ value, onChange }: { value: SeedTemplate; onChange: (nex
   const [keepText, setKeepText] = useState(value.keepIdTargets.join(', '))
   const [matchText, setMatchText] = useState(value.copiedObjectsMustMatchSource.join(', '))
   const tierObjects = value.tiers.map((t) => t.object)
+  // T-10 / T-15: the everyday settings stay in view; the ones that need the engine's
+  // vocabulary sit under "Advanced", open when any of them is already set.
+  const advancedInUse =
+    value.keepIdTargets.length + value.copiedObjectsMustMatchSource.length + value.relinkCopiedObjects.length + value.subsets.length > 0
 
   return (
     <div className="seed-settings">
@@ -567,126 +614,19 @@ function SeedSettings({ value, onChange }: { value: SeedTemplate; onChange: (nex
         Disable the target’s own automation on the seeded objects during the seed, restore after (default on)
       </label>
 
-      <label className="field">
-        <span>Keep-Id objects — lookups to these keep the source Id (a sandbox copy shares them)</span>
-        <input
-          className="text-input"
-          aria-label="Keep-Id objects"
-          value={keepText}
-          onChange={(e) => setKeepText(e.target.value)}
-          onBlur={() => onChange({ ...value, keepIdTargets: tokens(keepText) })}
-        />
-      </label>
-      <label className="field">
-        <span>Copied objects that must match the source before seeding</span>
-        <input
-          className="text-input"
-          aria-label="Copied objects that must match"
-          value={matchText}
-          onChange={(e) => setMatchText(e.target.value)}
-          onBlur={() => onChange({ ...value, copiedObjectsMustMatchSource: tokens(matchText) })}
-        />
-      </label>
-      <div className="row-inputs">
-        <label className="field">
-          <span>Match tolerance: absolute</span>
-          <input
-            className="map-matchfield"
-            type="number"
-            min={0}
-            value={value.copiedMatchTolerance?.absolute ?? 5}
-            onChange={(e) => onChange({ ...value, copiedMatchTolerance: { absolute: Number(e.target.value), fraction: value.copiedMatchTolerance?.fraction ?? 0.02 } })}
-          />
+      <h3>Verify after the seed</h3>
+      <p className="muted">Each check adds a section to the run report.</p>
+      {(
+        [
+          ['counts', 'Counts per object (source vs loaded vs target)'],
+          ['danglingLookups', 'Dangling lookups on relinked objects'],
+          ['secondPassParity', 'Second-pass values, record by record']
+        ] as const
+      ).map(([k, label]) => (
+        <label key={k} className="master-toggle">
+          <input type="checkbox" checked={value.verify[k]} onChange={(e) => onChange({ ...value, verify: { ...value.verify, [k]: e.target.checked } })} /> {label}
         </label>
-        <label className="field">
-          <span>fraction (0–1)</span>
-          <input
-            className="map-matchfield"
-            type="number"
-            min={0}
-            max={1}
-            step={0.01}
-            value={value.copiedMatchTolerance?.fraction ?? 0.02}
-            onChange={(e) => onChange({ ...value, copiedMatchTolerance: { absolute: value.copiedMatchTolerance?.absolute ?? 5, fraction: Number(e.target.value) } })}
-          />
-        </label>
-      </div>
-
-      <h3>Copied objects to relink after the seed</h3>
-      <p className="muted">Their lookups to seeded objects are repointed at the new rows. Must be keep-Id objects. Optional fields are dropped on a retry when a validation rule rejects them.</p>
-      {value.relinkCopiedObjects.map((r, i) => (
-        <div className="row-inputs" key={i}>
-          <input
-            className="map-matchfield"
-            aria-label={`Relink object ${i + 1}`}
-            value={r.object}
-            placeholder="Product2"
-            onChange={(e) => {
-              const next = [...value.relinkCopiedObjects]
-              next[i] = { ...r, object: e.target.value.trim() }
-              onChange({ ...value, relinkCopiedObjects: next })
-            }}
-          />
-          <input
-            className="text-input"
-            aria-label={`Relink optional fields ${i + 1}`}
-            value={r.optionalFields.join(', ')}
-            placeholder="optional fields, comma separated"
-            onChange={(e) => {
-              const next = [...value.relinkCopiedObjects]
-              next[i] = { ...r, optionalFields: tokens(e.target.value) }
-              onChange({ ...value, relinkCopiedObjects: next })
-            }}
-          />
-          <button className="btn btn-small" onClick={() => onChange({ ...value, relinkCopiedObjects: value.relinkCopiedObjects.filter((_, j) => j !== i) })}>
-            Remove
-          </button>
-        </div>
       ))}
-      <button className="btn btn-small" onClick={() => onChange({ ...value, relinkCopiedObjects: [...value.relinkCopiedObjects, { object: '', optionalFields: [] }] })}>
-        Add relink object
-      </button>
-
-      <h3>Root subsets</h3>
-      <p className="muted">Only these source records of an object (children follow through parent scope).</p>
-      {value.subsets.map((s, i) => (
-        <div className="row-inputs" key={i}>
-          <select
-            className="map-strategy"
-            aria-label={`Subset object ${i + 1}`}
-            value={s.object}
-            onChange={(e) => {
-              const next = [...value.subsets]
-              next[i] = { ...s, object: e.target.value }
-              onChange({ ...value, subsets: next })
-            }}
-          >
-            <option value="">— object —</option>
-            {tierObjects.map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </select>
-          <input
-            className="text-input"
-            aria-label={`Subset ids ${i + 1}`}
-            value={s.ids.join(', ')}
-            placeholder="record Ids, comma separated"
-            onChange={(e) => {
-              const next = [...value.subsets]
-              next[i] = { ...s, ids: tokens(e.target.value) }
-              onChange({ ...value, subsets: next })
-            }}
-          />
-          <button className="btn btn-small" onClick={() => onChange({ ...value, subsets: value.subsets.filter((_, j) => j !== i) })}>
-            Remove
-          </button>
-        </div>
-      ))}
-      <button className="btn btn-small" onClick={() => onChange({ ...value, subsets: [...value.subsets, { object: '', ids: [] }] })}>
-        Add subset
-      </button>
 
       <h3>Expected failures</h3>
       <p className="muted">Known failures are listed in the report with their reason instead of counting as unexpected. Matched by message text; leave the object blank for any object.</p>
@@ -696,7 +636,7 @@ function SeedSettings({ value, onChange }: { value: SeedTemplate; onChange: (nex
             className="map-matchfield"
             aria-label={`Expected failure object ${i + 1}`}
             value={f.object ?? ''}
-            placeholder="object (optional)"
+            placeholder="Any object"
             onChange={(e) => {
               const next = [...value.expectedFailures]
               next[i] = { ...f, object: e.target.value.trim() || null }
@@ -707,7 +647,7 @@ function SeedSettings({ value, onChange }: { value: SeedTemplate; onChange: (nex
             className="text-input"
             aria-label={`Expected failure contains ${i + 1}`}
             value={f.contains}
-            placeholder="message contains…"
+            placeholder="Message contains…"
             onChange={(e) => {
               const next = [...value.expectedFailures]
               next[i] = { ...f, contains: e.target.value }
@@ -718,7 +658,7 @@ function SeedSettings({ value, onChange }: { value: SeedTemplate; onChange: (nex
             className="text-input"
             aria-label={`Expected failure why ${i + 1}`}
             value={f.why}
-            placeholder="why it is expected"
+            placeholder="Why it is expected"
             onChange={(e) => {
               const next = [...value.expectedFailures]
               next[i] = { ...f, why: e.target.value }
@@ -734,18 +674,144 @@ function SeedSettings({ value, onChange }: { value: SeedTemplate; onChange: (nex
         Add expected failure
       </button>
 
-      <h3>Verify</h3>
-      {(
-        [
-          ['counts', 'Counts per object (source vs loaded vs target)'],
-          ['danglingLookups', 'Dangling lookups on relinked objects'],
-          ['secondPassParity', 'Second-pass values, record by record']
-        ] as const
-      ).map(([k, label]) => (
-        <label key={k} className="master-toggle">
-          <input type="checkbox" checked={value.verify[k]} onChange={(e) => onChange({ ...value, verify: { ...value.verify, [k]: e.target.checked } })} /> {label}
+      <details className="tier-section seed-advanced" open={advancedInUse} data-testid="seed-advanced">
+        <summary>Advanced — shared Ids, pre-seed checks, relinking and subsets</summary>
+
+        <label className="field">
+          <span>Objects whose Ids the sandbox already shares with the source</span>
+          <input
+            className="text-input"
+            aria-label="Keep-Id objects"
+            value={keepText}
+            placeholder="e.g. Product2, Pricebook2"
+            onChange={(e) => setKeepText(e.target.value)}
+            onBlur={() => onChange({ ...value, keepIdTargets: tokens(keepText) })}
+          />
+          <span className="field-help muted">
+            Lookups to these keep the source Id instead of being remapped — a sandbox copied from the source has the same records.
+          </span>
         </label>
-      ))}
+        <label className="field">
+          <span>Objects that must already match the source before seeding</span>
+          <input
+            className="text-input"
+            aria-label="Copied objects that must match"
+            value={matchText}
+            placeholder="e.g. Product2"
+            onChange={(e) => setMatchText(e.target.value)}
+            onBlur={() => onChange({ ...value, copiedObjectsMustMatchSource: tokens(matchText) })}
+          />
+          <span className="field-help muted">
+            Their row counts are compared source vs target before anything loads; a difference beyond the tolerance blocks the run.
+          </span>
+        </label>
+        <div className="row-inputs">
+          <label className="field">
+            <span>Allowed count difference (rows)</span>
+            <input
+              className="map-matchfield"
+              type="number"
+              min={0}
+              aria-label="Allowed count difference in rows"
+              value={value.copiedMatchTolerance?.absolute ?? 5}
+              onChange={(e) => onChange({ ...value, copiedMatchTolerance: { absolute: Number(e.target.value), fraction: value.copiedMatchTolerance?.fraction ?? 0.02 } })}
+            />
+          </label>
+          <label className="field">
+            <span>Allowed difference as a fraction (0–1)</span>
+            <input
+              className="map-matchfield"
+              type="number"
+              min={0}
+              max={1}
+              step={0.01}
+              aria-label="Allowed count difference as a fraction"
+              value={value.copiedMatchTolerance?.fraction ?? 0.02}
+              onChange={(e) => onChange({ ...value, copiedMatchTolerance: { absolute: value.copiedMatchTolerance?.absolute ?? 5, fraction: Number(e.target.value) } })}
+            />
+          </label>
+        </div>
+        <p className="field-help muted">The larger of the two is allowed — a few rows on a small object, a small share on a big one.</p>
+
+        <h3>Relink shared objects after the seed</h3>
+        <p className="muted">
+          Their lookups to seeded objects are repointed at the new rows. They must be in the shared-Ids list above. Optional fields are
+          dropped on a retry when a validation rule rejects them.
+        </p>
+        {value.relinkCopiedObjects.map((r, i) => (
+          <div className="row-inputs" key={i}>
+            <input
+              className="map-matchfield"
+              aria-label={`Relink object ${i + 1}`}
+              value={r.object}
+              placeholder="e.g. Product2"
+              onChange={(e) => {
+                const next = [...value.relinkCopiedObjects]
+                next[i] = { ...r, object: e.target.value.trim() }
+                onChange({ ...value, relinkCopiedObjects: next })
+              }}
+            />
+            <input
+              className="text-input"
+              aria-label={`Relink optional fields ${i + 1}`}
+              value={r.optionalFields.join(', ')}
+              placeholder="Optional fields, comma-separated"
+              onChange={(e) => {
+                const next = [...value.relinkCopiedObjects]
+                next[i] = { ...r, optionalFields: tokens(e.target.value) }
+                onChange({ ...value, relinkCopiedObjects: next })
+              }}
+            />
+            <button className="btn btn-small" onClick={() => onChange({ ...value, relinkCopiedObjects: value.relinkCopiedObjects.filter((_, j) => j !== i) })}>
+              Remove
+            </button>
+          </div>
+        ))}
+        <button className="btn btn-small" onClick={() => onChange({ ...value, relinkCopiedObjects: [...value.relinkCopiedObjects, { object: '', optionalFields: [] }] })}>
+          Add relink object
+        </button>
+
+        <h3>Only these source records</h3>
+        <p className="muted">Copy just the listed records of an object; its children follow through parent scope.</p>
+        {value.subsets.map((s, i) => (
+          <div className="row-inputs" key={i}>
+            <select
+              className="map-strategy"
+              aria-label={`Subset object ${i + 1}`}
+              value={s.object}
+              onChange={(e) => {
+                const next = [...value.subsets]
+                next[i] = { ...s, object: e.target.value }
+                onChange({ ...value, subsets: next })
+              }}
+            >
+              <option value="">— object —</option>
+              {tierObjects.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+            <input
+              className="text-input"
+              aria-label={`Subset ids ${i + 1}`}
+              value={s.ids.join(', ')}
+              placeholder="Record Ids, comma-separated"
+              onChange={(e) => {
+                const next = [...value.subsets]
+                next[i] = { ...s, ids: tokens(e.target.value) }
+                onChange({ ...value, subsets: next })
+              }}
+            />
+            <button className="btn btn-small" onClick={() => onChange({ ...value, subsets: value.subsets.filter((_, j) => j !== i) })}>
+              Remove
+            </button>
+          </div>
+        ))}
+        <button className="btn btn-small" onClick={() => onChange({ ...value, subsets: [...value.subsets, { object: '', ids: [] }] })}>
+          Add subset
+        </button>
+      </details>
     </div>
   )
 }

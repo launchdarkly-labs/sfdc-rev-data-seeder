@@ -35,7 +35,13 @@ export interface TriggerProbeResult {
  */
 export type OrgRole = 'source' | 'target' | 'unassigned'
 
-/** LaunchDarkly production — permanently read-only, can never be a target. */
+/**
+ * The DEFAULT production pin: the Org Id prefix of the org this tool was first
+ * built for. Any connection whose Org Id starts with the pinned prefix is
+ * read-only and can never be a target. Since 0.4.0 the pin is a runtime setting
+ * (shared/prodPin.ts, edited on the Connections page) and this constant is only
+ * its default — a stranger's production org is protected without a rebuild.
+ */
 export const PROD_ORG_ID_PREFIX = '00D41000000UvVn'
 
 export type AuthKind = 'cli' | 'oauth'
@@ -264,6 +270,18 @@ export interface DeploymentHeader {
   updatedAt: number
 }
 
+/**
+ * S64 P5 (5.1): one phase transition of a run, as persisted in `run_phases`
+ * (migration 014). Pre-run phases ('Connecting', 'Gates', 'Freezing plan',
+ * 'Auditing target') are stamped from the job's own clock once the run row
+ * exists; engine phases come from the state machine. Ordered by `at`; the
+ * duration of a phase is the next stamp's `at` minus its own.
+ */
+export interface DeployRunPhaseStamp {
+  phase: string
+  at: number
+}
+
 /** The latest deploy_runs row for a deployment, as the renderer sees it. */
 export interface DeployRunView {
   id: number
@@ -274,6 +292,14 @@ export interface DeployRunView {
   teardownOutcome: string | null
   startedAt: number | null
   finishedAt: number | null
+  /** S64 P5 (5.1): the run's phase transitions, oldest first (empty for pre-014 runs). */
+  phases?: DeployRunPhaseStamp[]
+  /**
+   * S64 P5 (5.1): peak working set per Electron process over the run, in MB,
+   * keyed by the memorySampler label ('main', 'renderer', 'gpu', …). Null
+   * until the run's sampler has stopped (and for pre-014 runs).
+   */
+  peakMemoryMB?: Record<string, number> | null
 }
 
 /** Run-level counters (v_run_counters — Apex recomputeDeploymentCounters SUM). */
@@ -483,6 +509,8 @@ export function automationItemKey(
  */
 export type RdsErrorCode =
   | 'AUTH_EXPIRED'
+  /** S64 (P2): the Salesforce CLI (`sf`) is not installed / not on PATH. */
+  | 'CLI_MISSING'
   | 'READ_ONLY_ORG'
   | 'SCOPE_OVERFLOW'
   | 'SOQL_INVALID'
@@ -567,6 +595,9 @@ export const IPC = {
   analyze: 'rds:analyze',
   deployStart: 'rds:deploy.start',
   deployRunState: 'rds:deploy.runState',
+  deployExportFailures: 'rds:deploy.exportFailures',
+  settingsGet: 'rds:settings.get',
+  settingsSet: 'rds:settings.set',
   oauthBegin: 'rds:oauth.begin',
   oauthDisconnect: 'rds:oauth.disconnect',
   readinessCheck: 'rds:readiness.check',
@@ -887,4 +918,14 @@ export interface RdsApi {
    *  full error), latest run + counters, plan-ordered objects, CPQ reminder,
    *  unconfirmed-restore count, and this session's latest deploy job. */
   deployRunState(deploymentId: number): Promise<DeployRunStateView>
+  /** S64 (P2): save the latest run's failed rows (object, source id, error, classification) as
+   *  JSON through a save dialog; resolves to the path, or null when cancelled. */
+  deployExportFailures(deploymentId: number): Promise<string | null>
+  /** S64 (P4): small key/value preferences (theme). Keys are allow-listed in main. */
+  settingsGet(key: SettingKey): Promise<string | null>
+  settingsSet(key: SettingKey, value: string): Promise<void>
 }
+
+/** Preference keys the renderer may read/write (S64 P4). */
+export type SettingKey = 'theme' | 'prodOrgIdPrefix'
+export const SETTING_KEYS: readonly SettingKey[] = ['theme', 'prodOrgIdPrefix']

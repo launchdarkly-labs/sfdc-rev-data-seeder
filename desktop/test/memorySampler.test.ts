@@ -1,6 +1,7 @@
 /** S54 (F5): peak-memory sampler — injected reader + timers, no Electron. */
 import { describe, it, expect, vi } from 'vitest'
 import {
+  peaksToMB,
   startMemorySampler,
   summarizePeaks,
   type ProcessSample
@@ -98,5 +99,33 @@ describe('summarizePeaks', () => {
         ])
       )
     ).toBe('Peak memory during the run: main 300 MB, renderer 200 MB, gpu 30 MB, utility 20 MB.')
+  })
+})
+
+describe('peaksMB (S64 P5 5.1 — the persisted shape)', () => {
+  it('mirrors the summary line: MB per label, main/renderer/gpu first, others after; empty → null', () => {
+    expect(peaksToMB(new Map())).toBeNull()
+    expect(
+      peaksToMB(
+        new Map([
+          ['Utility', 7 * MB],
+          ['GPU', 91 * MB],
+          ['Tab', 380 * MB],
+          ['Browser', 412 * MB]
+        ])
+      )
+    ).toEqual({ main: 412, renderer: 380, gpu: 91, utility: 7 })
+    const ft = fakeTimers()
+    const reads: ProcessSample[][] = [
+      [{ type: 'Browser', workingSetKB: 100 * MB }],
+      [{ type: 'Browser', workingSetKB: 300 * MB }, { type: 'Tab', workingSetKB: 50 * MB }]
+    ]
+    let i = 0
+    const s = startMemorySampler(() => reads[Math.min(i++, reads.length - 1)]!, 30_000, ft.timers)
+    expect(s.stop()).toBe('Peak memory during the run: main 300 MB, renderer 50 MB.')
+    expect(s.peaksMB()).toEqual({ main: 300, renderer: 50 })
+    const none = startMemorySampler(() => { throw new Error('no metrics') }, 30_000, fakeTimers().timers)
+    none.stop()
+    expect(none.peaksMB()).toBeNull()
   })
 })

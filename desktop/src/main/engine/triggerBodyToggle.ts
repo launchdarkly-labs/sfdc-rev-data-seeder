@@ -66,6 +66,7 @@
  */
 import { urlEncode, type AutomationToggleIo } from './automationToggle'
 import { ciEquals, escapeSingleQuotes } from './deploy/transform/apexSemantics'
+import { TOOLING_QUERY_PATH, TOOLING_SOBJECTS_PATH } from '../../shared/apiVersion'
 
 // Sentinel markers that surround the original body once it's wrapped (ATBTS:31-36).
 export const BEGIN_MARKER = '/*<<RDS_BYPASS_BEGIN>>'
@@ -74,8 +75,8 @@ export const END_MARKER = '<<RDS_BYPASS_END>>*/'
 // wrapper early; escaped to this token and reversed on restore.
 export const ESCAPED_CLOSE = '*<<RDS_ESC>>/'
 
-const TOOLING_BASE = '/services/data/v66.0/tooling/sobjects/'
-const TOOLING_QUERY = '/services/data/v66.0/tooling/query/?q='
+const TOOLING_BASE = TOOLING_SOBJECTS_PATH
+const TOOLING_QUERY = TOOLING_QUERY_PATH
 
 /** Apex MAX_POLL_ATTEMPTS was 60 paced by callout latency (~12-30s). The
  *  desktop paces with real sleep — 90 × 2s ≈ 3 minutes of patience. */

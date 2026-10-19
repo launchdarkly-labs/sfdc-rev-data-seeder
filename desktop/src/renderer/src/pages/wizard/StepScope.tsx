@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { isKeyless, stepAfterScope } from '../../../../shared/wizard'
+import { nextLabel, isKeyless, stepAfterScope } from '../../../../shared/wizard'
 import { FilterEditor } from './FilterEditor'
 import { SelectionPills } from '../../ui/SelectionPills'
 import { useWizard } from './WizardShell'
@@ -327,9 +327,15 @@ export function StepScope(): React.JSX.Element {
           disabled={empty}
           title={empty ? scopeEmptyMessage(withClause) : undefined}
         >
-          Next: {isKeyless(config) ? 'mappings' : 'readiness'}
+          {nextLabel(stepAfterScope(config))}
         </button>
       </div>
+      {/* F-8 / A-9: the reason Next is disabled, visible — the notice above has the detail. */}
+      {empty && (
+        <p className="muted deploy-gate-note" data-testid="scope-gate-note">
+          Next is disabled until at least one filter returns records — see the notice above.
+        </p>
+      )}
     </>
   )
 }

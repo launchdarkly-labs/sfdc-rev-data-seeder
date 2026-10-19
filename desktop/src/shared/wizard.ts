@@ -19,18 +19,41 @@ import type { TemplateRunSteps } from './templates/types'
  */
 export const WIZARD_STEPS = [
   'orgs',
-  // S62 (U-2): templates that run as stages of this deployment — before and/or after the data.
-  'templates',
   'objects',
   'scope',
   'readiness',
   'mappings',
   'fields',
+  // S62 (U-2): templates that run as stages of this deployment — before and/or after the data.
+  // S64 (P2): moved after Fields — a new user picks the data before meeting stages. The step id
+  // stays 'templates' so drafts saved at that step keep resolving.
+  'templates',
   'summary',
   'plan'
 ] as const
 
 export type WizardStep = (typeof WIZARD_STEPS)[number]
+
+/**
+ * S64 (P2): ONE label table drives the step nav, each step's heading and every
+ * "Next: …" button, so the three can never disagree again (ux IA-5).
+ */
+export const STEP_LABELS: Record<WizardStep, string> = {
+  orgs: 'Orgs',
+  objects: 'Objects',
+  scope: 'Scope',
+  readiness: 'Readiness',
+  mappings: 'Mappings',
+  fields: 'Fields',
+  templates: 'Stages',
+  summary: 'Summary',
+  plan: 'Plan'
+}
+
+/** "Next: <label>" for a button that goes to `step`. */
+export function nextLabel(step: WizardStep, suffix?: string): string {
+  return `Next: ${STEP_LABELS[step]}${suffix ? ` ${suffix}` : ''}`
+}
 
 export function stepIndex(step: WizardStep): number {
   return WIZARD_STEPS.indexOf(step)
@@ -278,11 +301,16 @@ export function snapshotWithTemplateGates(
   return { ...snapshot, cpqTriggerGatedObjects: union }
 }
 
-/** Fixed copy for the Templates step and the Plan step's stage list. */
-export const TEMPLATE_STAGES_NOTE =
-  'Each template runs through the templates engine as its own stage, with its own run row and report, ' +
-  'using this deployment’s source and target. A stage that ends blocked, failed or cancelled stops the sequence; ' +
-  'later stages are recorded as skipped. Purge is not offered here — to purge and re-seed, use the Templates tab.'
+/**
+ * Fixed copy for the Stages step and the Plan step's stage row. S64 (P3, ux T-16): one-sentence
+ * lead, with the rest behind "Learn more"; the full text stays available as TEMPLATE_STAGES_NOTE.
+ */
+export const TEMPLATE_STAGES_NOTE_LEAD =
+  'Each template runs as its own stage, with its own run row and report, using this deployment’s source and target.'
+export const TEMPLATE_STAGES_NOTE_MORE =
+  'A stage that ends blocked, failed or cancelled stops the sequence; later stages are recorded as skipped. ' +
+  'Purge is not offered here — to purge and re-seed, use the Templates tab.'
+export const TEMPLATE_STAGES_NOTE = `${TEMPLATE_STAGES_NOTE_LEAD} ${TEMPLATE_STAGES_NOTE_MORE}`
 
 /** S61 (U-5): the deployment inserts and matches through the local id map — no External Id field. */
 export function isKeyless(config: Pick<WizardConfig, 'useExternalIds'>): boolean {
@@ -293,11 +321,14 @@ export function isKeyless(config: Pick<WizardConfig, 'useExternalIds'>): boolean
  * S61 (U-5): the caution shown wherever keyless mode is chosen or about to run. Jack's framing
  * (2026-10-12): a lightweight seeder, not a sync tool — so say plainly what the map cannot do.
  */
-export const KEYLESS_CAUTION =
-  'Keyless mode inserts records and matches them through this app’s local id map instead of an External Id field. ' +
+export const KEYLESS_CAUTION_LEAD =
+  'Records are inserted and matched through this app’s local id map instead of an External Id field.'
+export const KEYLESS_CAUTION_MORE =
   'It may take a little longer (parents resolve through the map, batch by batch). ' +
-  'Re-running against the same target from THIS app skips rows it already mapped; another machine, a fresh app database, ' +
+  'Re-running against the same target from this app skips rows it already mapped; another machine, a fresh app database, ' +
   'or a target refresh has no map and would insert duplicates. Nothing on the target records which rows came from the seeder.'
+/** The full caution (lead + detail) — S64 (P3, ux T-16) splits it so pages can show the lead and a "Learn more". */
+export const KEYLESS_CAUTION = `${KEYLESS_CAUTION_LEAD} ${KEYLESS_CAUTION_MORE}`
 
 /** The steps the wizard offers for this config — keyless drafts never see Readiness (S61 U-5). */
 export function visibleWizardSteps(config: Pick<WizardConfig, 'useExternalIds'>): WizardStep[] {
@@ -394,7 +425,7 @@ export function readinessGateMessage(gate: ReadinessGate): string {
       return (
         `You can't proceed — ${gate.objects.length} object${gate.objects.length === 1 ? '' : 's'} ` +
         `(${gate.objects.join(', ')}) ${gate.objects.length === 1 ? 'has' : 'have'} no usable ` +
-        `Data_Deployment_External_Id__c on the target. Provision the External ID fields on the Readiness step first.`
+        `External Id field on the target. Create the External Id fields on the Readiness step first.`
       )
     case 'stale':
       return 'The scope changed since the last Readiness check — re-check the target on the Readiness step first.'

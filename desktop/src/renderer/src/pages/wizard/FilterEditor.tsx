@@ -78,12 +78,18 @@ export function FilterEditor({
   }
 
   const listId = `fields-${objectName}`
+  const inputId = `filter-input-${objectName}`
 
   return (
     <div className="filter-item" data-testid={`filter-${objectName}`}>
-      <label className="filter-row">
-        <span className="filter-object">{objectName}</span>
+      {/* ux A-10: a wrapper div + <label htmlFor>, so the Remove button is not
+          nested inside the label (clicking it used to activate the input too). */}
+      <div className="filter-row">
+        <label className="filter-object" htmlFor={inputId}>
+          {objectName}
+        </label>
         <input
+          id={inputId}
           type="text"
           className="filter-input"
           placeholder="WHERE clause (optional)"
@@ -104,7 +110,7 @@ export function FilterEditor({
             ×
           </button>
         )}
-      </label>
+      </div>
       {fields && fields.length > 0 && (
         <datalist id={listId}>
           {fields.map((f) => (

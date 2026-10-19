@@ -4,15 +4,17 @@
  * Guardrail D1 (standing project rule, enforced in code from day one):
  * - A connection whose role is not exactly 'target' REFUSES every write
  *   (DML, Bulk ingest, Tooling writes). Reads are always allowed.
- * - LaunchDarkly production (org Id prefix 00D41000000UvVn) is permanently
- *   pinned read-only — it can never be assigned the 'target' role, and even
- *   if store data were tampered with, the write gate re-checks the org Id.
+ * - The pinned PRODUCTION org (shared/prodPin.ts: a runtime setting whose
+ *   default is PROD_ORG_ID_PREFIX) is read-only — it can never be assigned the
+ *   'target' role, and even if store data were tampered with, the write gate
+ *   re-checks the minted org Id against the pin the caller passes in.
  *
- * API version is pinned to v66.0 to match the Apex app.
+ * The API version comes from shared/apiVersion.ts (one constant for the whole app).
  */
 import { Connection } from '@jsforce/jsforce-node'
 import type { OrgRole } from '../../shared/types'
-import { PROD_ORG_ID_PREFIX } from '../../shared/types'
+import { DEFAULT_PROD_ORG_ID_PREFIX, isPinnedProdOrgId } from '../../shared/prodPin'
+import { API_VERSION } from '../../shared/apiVersion'
 import { RdsHandlerError } from '../errors'
 import { getCliToken } from './sfcli'
 import {
@@ -21,7 +23,8 @@ import {
   type TokenProvider
 } from './tokenProvider'
 
-export const API_VERSION = '66.0'
+// Re-exported so existing callers (scripts, tests) keep one import path.
+export { API_VERSION }
 
 /**
  * Refresh-loop cap. jsforce retries a 401'd request after EVERY successful
@@ -107,8 +110,14 @@ export class ReadOnlyOrgError extends Error {
   }
 }
 
-export function isProdOrg(orgId: string): boolean {
-  return orgId.startsWith(PROD_ORG_ID_PREFIX)
+/** True when `orgId` is the pinned production org. `prefix` defaults to the compiled pin. */
+export function isProdOrg(orgId: string, prefix: string = DEFAULT_PROD_ORG_ID_PREFIX): boolean {
+  return isPinnedProdOrgId(orgId, prefix)
+}
+
+export interface ConnectOptions {
+  /** The runtime production pin (Store.getProdOrgIdPrefix()). Defaults to the compiled constant. */
+  prodOrgIdPrefix?: string
 }
 
 export interface GuardedOrg {
@@ -134,11 +143,13 @@ export interface GuardedOrg {
  */
 export async function connect(
   conn: ConnectionInput,
-  tokens: TokenProvider
+  tokens: TokenProvider,
+  options: ConnectOptions = {}
 ): Promise<GuardedOrg> {
   const alias = conn.cliAlias ?? conn.id
+  const prodPrefix = options.prodOrgIdPrefix ?? DEFAULT_PROD_ORG_ID_PREFIX
   const minted = await tokens.mint(conn)
-  // Prod pin: force read-only when the MINTED org id is LD production. For CLI
+  // Prod pin: force read-only when the MINTED org id is the pinned production org. For CLI
   // this id is live-derived (`sf org display`); for OAuth it currently comes from
   // the stored row (A3's vault holds no orgId). So an OAuth row with an empty/
   // unknown org id can't be trusted as non-prod — treat it as read-only until a
@@ -146,7 +157,7 @@ export async function connect(
   // OAuth org id live from the token idUrl (+ sandbox-refresh drift) is A7/A8.
   const untrustedOAuthOrg = conn.authKind === 'oauth' && !minted.orgId
   const effectiveRole: OrgRole =
-    isProdOrg(minted.orgId) || untrustedOAuthOrg ? 'source' : conn.role
+    isProdOrg(minted.orgId, prodPrefix) || untrustedOAuthOrg ? 'source' : conn.role
 
   const jsConn = new Connection({
     instanceUrl: minted.instanceUrl,
@@ -161,11 +172,11 @@ export async function connect(
     orgId: minted.orgId,
     conn: jsConn,
     assertWritable(operation: string): void {
-      if (isProdOrg(guarded.orgId)) {
+      if (isProdOrg(guarded.orgId, prodPrefix)) {
         throw new ReadOnlyOrgError(
           alias,
           guarded.role,
-          `This is LaunchDarkly PRODUCTION — permanently read-only (attempted: ${operation}).`
+          `This is the pinned PRODUCTION org — read-only (attempted: ${operation}).`
         )
       }
       if (guarded.role !== 'target') {

@@ -1,19 +1,25 @@
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { JobEvent, JobSummary } from '../../../../shared/types'
 import { DRY_RUN_CAVEAT, type SeedTemplate, type TemplateReport, type TemplateRunInput, type TemplateRunStateView } from '../../../../shared/templates/types'
+import { phaseLabel } from '../../../../shared/labels'
 import { callIpc, toRdsError } from '../../ipc/client'
 import { useIpcQuery } from '../../ipc/hooks'
 import { useJob, useJobsStore } from '../../store/jobs'
 import { Badge } from '../../ui/Badge'
+import { CancelJobButton } from '../../ui/CancelJobButton'
 import { useConfirm } from '../../ui/ConfirmDialog'
 import { ProgressBar } from '../../ui/ProgressBar'
 import { useToast } from '../../ui/Toast'
+import { useGuardedRefresh } from '../../ipc/guardedRefresh'
 import { fmtDuration, fmtWhen, runStateTone } from './templateUi'
 
-const REFETCH_DEBOUNCE_MS = 400
-const TAIL_POLL_MS = 3000
 const MAX_LOG_LINES = 400
+
+interface LogLine {
+  level: string
+  message: string
+}
 
 /**
  * /templates/:id/runs/:runId — monitor + report (S59 plan §2.4). Live: the
@@ -31,16 +37,7 @@ export function TemplateRunReportPage(): React.JSX.Element {
 
   const [state, setState] = useState<TemplateRunStateView | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [log, setLog] = useState<Array<{ level: string; message: string }>>([])
-
-  const load = useCallback(async (): Promise<void> => {
-    try {
-      setState(await callIpc(() => window.rds.templateRunState(run)))
-      setError(null)
-    } catch (e) {
-      setError(toRdsError(e).message)
-    }
-  }, [run])
+  const [log, setLog] = useState<LogLine[]>([])
 
   useEffect(() => {
     void useJobsStore.getState().refresh()
@@ -49,32 +46,59 @@ export function TemplateRunReportPage(): React.JSX.Element {
   const liveJob = useJob(state?.run.jobId ?? undefined)
   const job: JobSummary | null = liveJob ?? state?.job ?? null
   const jobKey = liveJob ? `${liveJob.id}|${liveJob.status}|${liveJob.phase ?? ''}|${liveJob.progress?.value ?? ''}/${liveJob.progress?.max ?? ''}|${liveJob.progress?.label ?? ''}` : ''
-  useEffect(() => {
-    let cancelled = false
-    const t = setTimeout(() => {
-      if (!cancelled) void load()
-    }, jobKey === '' ? 0 : REFETCH_DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      clearTimeout(t)
-    }
-  }, [load, jobKey])
   const jobRunning = job?.status === 'running'
-  useEffect(() => {
-    if (!jobRunning) return
-    const t = setInterval(() => void load(), TAIL_POLL_MS)
-    return () => clearInterval(t)
-  }, [jobRunning, load])
+  // S64 P5 (5.4): one guarded refresh path — the debounced job-change read and
+  // the 3 s floor while the job runs both go through it (see useGuardedRefresh).
+  const load = useGuardedRefresh<TemplateRunStateView>({
+    key: run,
+    enabled: Number.isFinite(run),
+    fetch: () => window.rds.templateRunState(run),
+    onLoaded: (next) => {
+      setState(next)
+      setError(null)
+    },
+    onError: setError,
+    jobKey,
+    polling: jobRunning
+  })
 
   // Live log: the job-event stream filtered to this run's job (not persisted — the report is).
+  // S64 P5 (5.4): the ring buffer lives in a ref and is appended in place; a
+  // burst of lines is published to state ONCE per macrotask (one ≤400-entry
+  // copy, one render) instead of a copy + render per line.
   const jobId = state?.run.jobId ?? null
+  const logBuf = useRef<LogLine[]>([])
   useEffect(() => {
     if (!jobId) return
-    return window.rds.onJobEvent((e: JobEvent) => {
+    let flush: ReturnType<typeof setTimeout> | null = null
+    const off = window.rds.onJobEvent((e: JobEvent) => {
       if (e.jobId !== jobId || e.kind !== 'log') return
-      setLog((l) => [...l, { level: String(e.data.level ?? 'info'), message: String(e.data.message ?? '') }].slice(-MAX_LOG_LINES))
+      const buf = logBuf.current
+      buf.push({ level: String(e.data.level ?? 'info'), message: String(e.data.message ?? '') })
+      if (buf.length > MAX_LOG_LINES) buf.shift()
+      if (flush == null) {
+        flush = setTimeout(() => {
+          flush = null
+          setLog(logBuf.current.slice())
+        }, 0)
+      }
     })
+    return () => {
+      off()
+      if (flush != null) clearTimeout(flush)
+    }
   }, [jobId])
+
+  // S64 (P3, ux F-7): the log follows its tail unless the pointer is over it, and can be
+  // narrowed to errors and warnings. Scrolling the element is a DOM effect, not state.
+  const logRef = useRef<HTMLPreElement>(null)
+  const [logPaused, setLogPaused] = useState(false)
+  const [errorsOnly, setErrorsOnly] = useState(false)
+  const shownLog = errorsOnly ? log.filter((l) => l.level === 'error' || l.level === 'warn') : log
+  useEffect(() => {
+    const el = logRef.current
+    if (el && !logPaused) el.scrollTop = el.scrollHeight
+  }, [shownLog.length, logPaused])
 
   // S61 U-1 — "Apply with these settings": a clean (or partial) DRY RUN of the current template
   // revision, run in THIS app session, can be applied from its report with exactly the steps and
@@ -133,7 +157,7 @@ export function TemplateRunReportPage(): React.JSX.Element {
       await callIpc(() => window.rds.templateRestoreAutomation(run))
       await useJobsStore.getState().refresh()
       toast('Restore started — the run page follows it.', 'success')
-      void load()
+      load()
     } catch (e) {
       toast(toRdsError(e).message, 'error')
     }
@@ -173,7 +197,7 @@ export function TemplateRunReportPage(): React.JSX.Element {
         <h1>Template run {run}</h1>
         <div className="banner">
           {error}{' '}
-          <button className="btn" onClick={() => void load()}>
+          <button className="btn" onClick={load}>
             Retry
           </button>
         </div>
@@ -211,12 +235,8 @@ export function TemplateRunReportPage(): React.JSX.Element {
           {r.state}
           {r.state === 'partial' && report ? ` · ${report.summary.unexpected} unexpected` : ''}
         </Badge>
-        {jobRunning && phase && <span className="muted"> · {phase}</span>}
-        {jobRunning && (
-          <button className="btn" onClick={() => void window.rds.jobCancel(job!.id)}>
-            Cancel
-          </button>
-        )}
+        {jobRunning && phase && <span className="muted"> · {phaseLabel(phase)}</span>}
+        {jobRunning && job && <CancelJobButton jobId={job.id} />}
       </div>
       {jobRunning && job?.progress && <ProgressBar value={job.progress.value} max={job.progress.max} label={job.progress.label} />}
       {job?.error && !jobRunning && <div className="banner">{job.error}</div>}
@@ -321,10 +341,10 @@ export function TemplateRunReportPage(): React.JSX.Element {
                   <tr>
                     <th>Patch</th>
                     <th>Field</th>
-                    <th>Rows</th>
-                    <th>Already</th>
-                    <th>Updated</th>
-                    <th>Failed</th>
+                    <th title="Rows the patch’s WHERE clause selected on the target">Rows selected</th>
+                    <th title="Rows that already held the wanted value — left alone">Already patched</th>
+                    <th title="Rows written by this run">Updated</th>
+                    <th title="Rows the target refused">Failed</th>
                     <th>Result</th>
                   </tr>
                 </thead>
@@ -354,7 +374,9 @@ export function TemplateRunReportPage(): React.JSX.Element {
             <section>
               <h2>Safety check</h2>
               {report.safetyCheck.problems.length === 0 ? (
-                <p className="status-ok">✓ Every automation item and patch re-read in the wanted state.</p>
+                <p className="status-ok">
+                  <span aria-hidden="true">✓</span> Every automation item and patch re-read in the wanted state.
+                </p>
               ) : (
                 <ul className="problem-list">
                   {report.safetyCheck.problems.map((p) => (
@@ -393,8 +415,8 @@ export function TemplateRunReportPage(): React.JSX.Element {
                           <td className="muted">{i.itemType}</td>
                           <td>{i.name}</td>
                           <td className="muted">{i.object}</td>
-                          <td>{i.disabled ? '✓' : i.detail ?? '—'}</td>
-                          <td>{i.restored ? '✓' : report.mode === 'dry-run' ? '—' : '✗'}</td>
+                          <td>{i.disabled ? <Tick ok label="disabled" /> : i.detail ?? '—'}</td>
+                          <td>{i.restored ? <Tick ok label="restored" /> : report.mode === 'dry-run' ? '—' : <Tick ok={false} label="not restored" />}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -425,13 +447,13 @@ export function TemplateRunReportPage(): React.JSX.Element {
                 <thead>
                   <tr>
                     <th>Object</th>
-                    <th>Group</th>
-                    <th>Source</th>
-                    <th>Loaded</th>
-                    <th>Failed</th>
-                    <th>Skipped</th>
-                    <th>Nulled</th>
-                    <th>Fields</th>
+                    <th title="The load group this object belongs to">Load group</th>
+                    <th title="Rows read from the source">Source rows</th>
+                    <th title="Rows written to the target">Loaded</th>
+                    <th title="Rows the target refused">Failed</th>
+                    <th title="Rows left out on purpose (parent missing, policy skip)">Skipped</th>
+                    <th title="Lookups set to null because the parent was not loaded">Nulled lookups</th>
+                    <th title="Distinct fields written per row">Fields written</th>
                     <th>Notes</th>
                   </tr>
                 </thead>
@@ -441,6 +463,10 @@ export function TemplateRunReportPage(): React.JSX.Element {
                   ))}
                 </tbody>
               </table>
+              <p className="muted legend">
+                Source rows → Loaded + Failed + Skipped. Nulled lookups: references whose parent was not loaded.
+                Fields written: distinct fields per row. Expand an object for its row-level detail.
+              </p>
             </section>
           )}
 
@@ -451,10 +477,10 @@ export function TemplateRunReportPage(): React.JSX.Element {
                 <thead>
                   <tr>
                     <th>Object</th>
-                    <th>Updates</th>
-                    <th>Updated</th>
-                    <th>Failed</th>
-                    <th>Fields</th>
+                    <th title="Rows with deferred fields to write in the second pass">Updates planned</th>
+                    <th title="Rows written in the second pass">Updated</th>
+                    <th title="Rows the target refused in the second pass">Failed</th>
+                    <th title="The deferred fields written">Fields written</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -482,12 +508,12 @@ export function TemplateRunReportPage(): React.JSX.Element {
                 <thead>
                   <tr>
                     <th>Object</th>
-                    <th>Records</th>
-                    <th>Updated</th>
-                    <th>Already correct</th>
-                    <th>Partial</th>
-                    <th>Failed</th>
-                    <th>Fields</th>
+                    <th title="Rows of this shared object examined">Records</th>
+                    <th title="Rows whose lookups were repointed at the seeded rows">Updated</th>
+                    <th title="Rows already pointing at the right target rows">Already correct</th>
+                    <th title="Rows where some lookups relinked and others could not">Partial</th>
+                    <th title="Rows the target refused">Failed</th>
+                    <th title="The lookup fields relinked">Fields relinked</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -528,7 +554,15 @@ export function TemplateRunReportPage(): React.JSX.Element {
                         <td>{c.source}</td>
                         <td>{c.loaded}</td>
                         <td>{c.target}</td>
-                        <td>{c.gap ? <Badge tone="warn">gap</Badge> : <span className="status-ok">✓</span>}</td>
+                        <td>
+                          {c.gap ? (
+                            <Badge tone="warn">gap</Badge>
+                          ) : (
+                            <span className="status-ok">
+                              <Tick ok label="counts match" />
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -562,16 +596,44 @@ export function TemplateRunReportPage(): React.JSX.Element {
 
       {log.length > 0 && (
         <section>
-          <h2>Log</h2>
-          <pre className="run-log" data-testid="run-log">
-            {log.map((l, i) => (
+          <div className="log-head">
+            <h2>Log</h2>
+            <span className="muted" data-testid="log-cap">
+              {log.length >= MAX_LOG_LINES
+                ? `showing the last ${MAX_LOG_LINES} lines`
+                : `${log.length} line${log.length === 1 ? '' : 's'} so far — showing the last ${MAX_LOG_LINES} once it fills`}
+            </span>
+            <label className="check inline">
+              <input type="checkbox" checked={errorsOnly} onChange={(e) => setErrorsOnly(e.target.checked)} /> Errors and warnings only
+            </label>
+            {logPaused && <span className="muted">auto-scroll paused while the pointer is over the log</span>}
+          </div>
+          <pre
+            ref={logRef}
+            className="run-log"
+            data-testid="run-log"
+            onMouseEnter={() => setLogPaused(true)}
+            onMouseLeave={() => setLogPaused(false)}
+          >
+            {shownLog.map((l, i) => (
               <div key={i} className={l.level === 'error' ? 'status-err' : l.level === 'warn' ? 'status-warn' : ''}>
                 {l.message}
               </div>
             ))}
+            {errorsOnly && shownLog.length === 0 && <div className="muted">No errors or warnings in the last {log.length} lines.</div>}
           </pre>
         </section>
       )}
+    </>
+  )
+}
+
+/** Decorative ✓ / ✗ with the meaning in text for assistive tech (ux A-12). */
+function Tick({ ok, label }: { ok: boolean; label: string }): React.JSX.Element {
+  return (
+    <>
+      <span aria-hidden="true">{ok ? '✓' : '✗'}</span>
+      <span className="sr-only">{label}</span>
     </>
   )
 }
@@ -678,7 +740,13 @@ function Summary({ report, onApplyBatchSize, canApply }: { report: TemplateRepor
   )
 }
 
-function SeedRow({ s }: { s: TemplateReport['seed'][number] }): React.JSX.Element {
+/**
+ * S64 P5 (5.5b): memoised — `s` is a row of the persisted report, which keeps
+ * its reference across the log-flush and job-event renders of the page, so
+ * those renders skip every seed row. (A fresh `templateRunState` read is a new
+ * report object; the rows re-render then, which is the correct cost.)
+ */
+const SeedRow = memo(function SeedRow({ s }: { s: TemplateReport['seed'][number] }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const notes: string[] = []
   if (s.skippedObject) notes.push(`SKIPPED: ${s.skippedObject}`)
@@ -695,7 +763,7 @@ function SeedRow({ s }: { s: TemplateReport['seed'][number] }): React.JSX.Elemen
         <td>
           {hasDetail ? (
             <button className="btn subtle tier-name" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-              {open ? '▾' : '▸'} {s.object}
+              <span aria-hidden="true">{open ? '▾' : '▸'}</span> {s.object}
             </button>
           ) : (
             s.object
@@ -739,4 +807,4 @@ function SeedRow({ s }: { s: TemplateReport['seed'][number] }): React.JSX.Elemen
       )}
     </>
   )
-}
+})

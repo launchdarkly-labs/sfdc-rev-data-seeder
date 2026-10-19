@@ -3,10 +3,14 @@
  * All heavy lifting lives in services/ and engine/ so it stays testable
  * outside Electron.
  */
-import { app, ipcMain, shell } from 'electron'
+import { app, dialog, ipcMain, shell } from 'electron'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { NO_TARGET_KEYS } from '../shared/mappingPolicy'
 import { randomUUID } from 'node:crypto'
-import { IPC } from '../shared/types'
+import { SETTING_KEYS, IPC } from '../shared/types'
+import type { SettingKey } from '../shared/types'
+import { normalizeSettingValue } from '../shared/settings'
 import type { OrgConnection, OrgRole, OAuthBeginInput, TemplateKind } from '../shared/types'
 import type { WizardConfig, WizardStep } from '../shared/wizard'
 import { listCliOrgs, getCliToken } from './services/sfcli'
@@ -39,7 +43,7 @@ import { slotRefillReorder } from './engine/planReorder'
 import { discoverAutomation, makeAutomationIo } from './services/automationDiscovery'
 import { canEditPlan, isDeployBusy, isKeyless } from '../shared/wizard'
 import { bridgeCancel } from './services/deployAttempt'
-import { buildDeployRunState } from './services/deployRunState'
+import { currentAttemptRun, buildDeployRunState } from './services/deployRunState'
 import { invalidateTargetKeysCache, probeTargetKeys } from './services/targetKeys'
 import { outOfScopeRefs, requiredReferenceWarnings } from '../shared/scopeAdvisor'
 import type { FieldInfo } from '../shared/types'
@@ -84,7 +88,10 @@ export function registerIpc(store: Store, jobs: JobManager, vault: TokenVault): 
   const connectById = (connectionId: string, roleOverride?: OrgRole): Promise<GuardedOrg> => {
     const row = store.getConnection(connectionId)
     if (!row) throw new RdsHandlerError('NOT_FOUND', `Unknown connection: ${connectionId}`)
-    return connect(roleOverride ? { ...row, role: roleOverride } : row, tokens)
+    // S64 P6 (D6): the write gate re-checks the minted org id against the RUNTIME pin.
+    return connect(roleOverride ? { ...row, role: roleOverride } : row, tokens, {
+      prodOrgIdPrefix: store.getProdOrgIdPrefix()
+    })
   }
 
   // S46 D3 — cancel bridge: jobId → deploy_runs.id for RUNNING deploy jobs.
@@ -864,5 +871,58 @@ export function registerIpc(store: Store, jobs: JobManager, vault: TokenVault): 
   ipcMain.handle(
     IPC.deployRunState,
     wrapHandler((_e, deploymentId: number) => buildDeployRunState(store, jobs, deploymentId))
+  )
+
+  // rds:settings.get / set — S64 (P4): renderer preferences (theme); P6 adds the
+  // production pin (`prodOrgIdPrefix`, validated to an Org Id). Allow-listed keys only.
+  ipcMain.handle(
+    IPC.settingsGet,
+    wrapHandler((_e, key: string) => {
+      if (!(SETTING_KEYS as readonly string[]).includes(key)) throw new RdsHandlerError('INVALID_STATE', `Unknown setting ${key}`)
+      return store.getSetting(`pref.${key}`)
+    })
+  )
+  ipcMain.handle(
+    IPC.settingsSet,
+    wrapHandler((_e, key: string, value: string) => {
+      if (!(SETTING_KEYS as readonly string[]).includes(key)) throw new RdsHandlerError('INVALID_STATE', `Unknown setting ${key}`)
+      let normalized: string
+      try {
+        normalized = normalizeSettingValue(key as SettingKey, value)
+      } catch (e) {
+        throw new RdsHandlerError('INVALID_STATE', e instanceof Error ? e.message : String(e))
+      }
+      store.putSetting(`pref.${key}`, normalized)
+    })
+  )
+
+  // rds:deploy.exportFailures — S64 (P2): the latest run's failed rows with their reasons, as a
+  // JSON file the operator picks a location for. Replaces the "look in failed_records" copy.
+  ipcMain.handle(
+    IPC.deployExportFailures,
+    wrapHandler(async (_e, deploymentId: number) => {
+      const header = store.getDeploymentHeader(deploymentId)
+      if (!header) throw new RdsHandlerError('NOT_FOUND', `Deployment ${deploymentId} not found`)
+      const run = currentAttemptRun(store, deploymentId, header.status)
+      if (!run) throw new RdsHandlerError('INVALID_STATE', 'This deployment has no run to export failures from.')
+      const failures = store.deploy.failureExport(run.id)
+      const safe = header.name.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'deployment'
+      const res = await dialog.showSaveDialog({
+        title: 'Export failure list',
+        defaultPath: join(app.getPath('documents'), `${safe}-run${run.id}-failures.json`),
+        filters: [{ name: 'JSON', extensions: ['json'] }]
+      })
+      if (res.canceled || !res.filePath) return null
+      const file = {
+        deploymentId,
+        deploymentName: header.name,
+        runId: run.id,
+        exportedAt: new Date().toISOString(),
+        failureCount: failures.length,
+        failures
+      }
+      await writeFile(res.filePath, JSON.stringify(file, null, 2) + '\n', 'utf8')
+      return res.filePath
+    })
   )
 }

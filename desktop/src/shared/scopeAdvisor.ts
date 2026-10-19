@@ -389,7 +389,7 @@ export function requiredReferenceWarnings(input: {
         : state === 'fieldOnly'
           ? ` Add ${refTo} on the Scope step, or deploy ${refTo} first so the reference can resolve against RDS-keyed rows on the target.`
           : state === 'keyedRows'
-            ? ` The mapping for ${f.apiName} is set to Skip — set it to External ID to resolve against the RDS-keyed ${refTo} rows on the target.`
+            ? ` The mapping for ${f.apiName} is set to Skip — set it to External Id to resolve against the RDS-keyed ${refTo} rows on the target.`
             : ` Add ${refTo} on the Scope step.`
     out.push(
       `${objectName}.${f.apiName} is required and ${refTo} is not ` +

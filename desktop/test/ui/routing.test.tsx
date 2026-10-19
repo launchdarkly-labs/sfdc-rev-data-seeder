@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react'
 import { App } from '../../src/renderer/src/App'
 import { emptyWizardConfig } from '../../src/shared/wizard'
 
@@ -15,6 +15,8 @@ beforeEach(() => {
     describeGlobal: async () => [],
     describeObject: async () => [],
     jobList: async () => [],
+    settingsGet: async () => null,
+    settingsSet: async () => undefined,
     jobCancel: async () => undefined,
     jobDemo: async () => ({ jobId: 'job-1' }),
     onJobEvent: () => () => undefined,
@@ -69,17 +71,19 @@ function renderAt(hash: string): void {
   render(<App />)
 }
 
+const nav = (): HTMLElement => screen.getByRole('navigation', { name: 'Main' })
+
 describe('routing', () => {
-  it('renders Home at the index route', () => {
+  it('renders Deployments at the index route (S64 P3: Home became the Deployments page)', () => {
     renderAt('#/')
-    expect(screen.getByRole('heading', { name: 'Home' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Deployments' })).toBeInTheDocument()
   })
 
   it.each([
-    ['#/connections', 'Org Connections'],
-    ['#/extids', 'External IDs'],
-    ['#/history', 'History'],
-    ['#/tools', 'Tools'],
+    ['#/connections', /Connections$/],
+    ['#/extids', 'Deployments'],
+    ['#/history', 'Deployments'],
+    ['#/tools', 'Deployments'],
     ['#/settings', 'Settings'],
     ['#/howto', 'How To'],
     ['#/welcome', 'Welcome'],
@@ -94,7 +98,7 @@ describe('routing', () => {
     renderAt('#/deployments/42/wizard/scope')
     // Draft loads async; the shell then renders the deployment name + step nav.
     expect(await screen.findByRole('heading', { name: 'Test Deploy' })).toBeInTheDocument()
-    expect(screen.getByText('src → tgt · Draft')).toBeInTheDocument()
+    expect(screen.getByText(/src → tgt · Draft/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Scope' })).toBeInTheDocument()
   })
 
@@ -112,31 +116,57 @@ describe('routing', () => {
   it('renders the sidebar nav on every shell route', () => {
     renderAt('#/')
     expect(screen.getByText('Rev Data Seeder')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Org Connections' })).toBeInTheDocument()
+    expect(within(nav()).getByRole('link', { name: 'Connections' })).toHaveAttribute('href', '#/connections')
   })
 
-  // The wizard route existed from 5B.1 but had no nav entry, so the only way in
-  // was to type the hash by hand. These two pin the entry points.
-  it('links to New Deployment and How To from the sidebar', () => {
+  // S64 P3 (ux IA-3): the nav lists PLACES. "New deployment" is an action and is a
+  // button on the Deployments page, not a nav entry.
+  it('offers New deployment on the Deployments page, and How To from the sidebar', () => {
     renderAt('#/')
-    expect(screen.getByRole('link', { name: 'New Deployment' })).toHaveAttribute(
-      'href',
-      '#/deployments/new'
-    )
-    expect(screen.getByRole('link', { name: 'How To' })).toHaveAttribute('href', '#/howto')
+    expect(within(nav()).queryByRole('link', { name: /New Deployment/i })).toBeNull()
+    expect(screen.getByRole('link', { name: 'New deployment' })).toHaveAttribute('href', '#/deployments/new')
+    expect(within(nav()).getByRole('link', { name: 'How To' })).toHaveAttribute('href', '#/howto')
   })
 
-  // S59: the Templates tab is a left-nav entry, between New Deployment and Org Connections.
+  // S59: the Templates tab is a left-nav entry, right after Deployments.
   it('links to Templates from the sidebar, and How To explains the two template types', () => {
     renderAt('#/')
     expect(screen.getByRole('link', { name: 'Templates' })).toHaveAttribute('href', '#/templates')
-    const labels = screen.getAllByRole('link').map((l) => l.textContent)
-    expect(labels.indexOf('Templates')).toBe(labels.indexOf('New Deployment') + 1)
+    // nav items only — the brand is a link too (S64 P4), so filter by its class
+    const labels = within(nav())
+      .getAllByRole('link')
+      .filter((l) => l.classList.contains('nav-item'))
+      .map((l) => l.textContent)
+    expect(labels).toEqual(['Deployments', 'Templates', 'Connections', 'How To', 'Settings'])
     renderAt('#/howto')
     expect(screen.getByRole('heading', { name: 'Templates: post-refresh and data seed' })).toBeInTheDocument()
     expect(screen.getByText(/Post-refresh automation changes are PERSISTENT/)).toBeInTheDocument()
     expect(screen.getByText(/Seed-time automation disables are TEMPORARY/)).toBeInTheDocument()
     expect(screen.getByText(/A clean dry run is not a promise/)).toBeInTheDocument()
+  })
+
+  // S64 P3 (ux IA-3): the Deployments item stays lit inside a deployment.
+  it.each(['#/', '#/deployments/7', '#/deployments/42/wizard/scope', '#/deployments/new'])(
+    'highlights Deployments in the sidebar at %s',
+    async (hash) => {
+      renderAt(hash)
+      const link = within(nav()).getByRole('link', { name: 'Deployments' })
+      await waitFor(() => expect(link).toHaveClass('active'))
+      expect(within(nav()).getByRole('link', { name: 'Templates' })).not.toHaveClass('active')
+    }
+  )
+
+  it('highlights only Templates on a templates route', () => {
+    renderAt('#/templates/new')
+    expect(within(nav()).getByRole('link', { name: 'Templates' })).toHaveClass('active')
+    expect(within(nav()).getByRole('link', { name: 'Deployments' })).not.toHaveClass('active')
+  })
+
+  // S64 P3 (ux IA-14): Idle is plain text, not a link to Home.
+  it('shows Idle in the sidebar footer as text, not a link', () => {
+    renderAt('#/')
+    expect(screen.getByText('Idle')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Idle' })).toBeNull()
   })
 
   it('discloses the ExtId field and the CPQ attestation on the How To page', () => {

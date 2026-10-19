@@ -79,7 +79,7 @@ export function ReadFromPicker({
         </div>
         {options.length === 0 && (
           <span className="muted">
-            No {scope === 'all' ? '' : `${scope} `}orgs yet — assign a role on the Org Connections page.
+            No {scope === 'all' ? '' : `${scope} `}orgs yet — assign a role on the Connections page.
           </span>
         )}
       </label>
@@ -107,6 +107,28 @@ export function fmtWhen(ms: number | null | undefined): string {
   if (ms == null) return '—'
   const d = new Date(ms)
   return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+}
+
+/**
+ * "3 days ago" for list cells (S64 P3, ux T-11); pair it with the exact
+ * `fmtWhen` on `title`. `now` is injectable for tests.
+ */
+export function relativeTime(ms: number | null | undefined, now: number = Date.now()): string {
+  if (ms == null) return '—'
+  const diff = Math.max(0, now - ms)
+  const s = Math.round(diff / 1000)
+  if (s < 45) return 'just now'
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m} minute${m === 1 ? '' : 's'} ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`
+  const d = Math.round(h / 24)
+  if (d === 1) return 'yesterday'
+  if (d < 30) return `${d} days ago`
+  const mo = Math.round(d / 30)
+  if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`
+  const y = Math.round(d / 365)
+  return `${y} year${y === 1 ? '' : 's'} ago`
 }
 
 export function fmtDuration(start: number, end: number | null): string {

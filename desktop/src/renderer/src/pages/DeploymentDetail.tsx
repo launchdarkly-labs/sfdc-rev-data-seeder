@@ -1,6 +1,12 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import type { DeployRunStateView, JobSummary, DeployStageView, TextIdRelinkSummaryView } from '../../../shared/types'
+import type {
+  DeployRunPhaseStamp,
+  DeployRunStateView,
+  JobSummary,
+  DeployStageView,
+  TextIdRelinkSummaryView
+} from '../../../shared/types'
 import { canDeleteDeployment, canEditPlan, isDeployBusy } from '../../../shared/wizard'
 import {
   AUTOMATION_BORN_GUIDANCE,
@@ -13,10 +19,13 @@ import {
   STALLED_TEARDOWN_MESSAGE,
   STRANDED_RUN_MESSAGE
 } from '../../../shared/recoveryCopy'
+import { GLOSSARY, PRE_RUN_PHASES, phaseLabel } from '../../../shared/labels'
 import { callIpc, toRdsError } from '../ipc/client'
+import { useGuardedRefresh } from '../ipc/guardedRefresh'
 import { useJobsStore, useLatestJobForDeployment } from '../store/jobs'
 import { fmtDuration } from './templates/templateUi'
 import { Badge, type BadgeTone } from '../ui/Badge'
+import { CancelJobButton } from '../ui/CancelJobButton'
 import { useConfirm } from '../ui/ConfirmDialog'
 import { ProgressBar } from '../ui/ProgressBar'
 import { useToast } from '../ui/Toast'
@@ -31,18 +40,11 @@ import { useToast } from '../ui/Toast'
  * recovery that does not exist (E2 text: manual Setup steps instead).
  *
  * Data: one `deployRunState` read (persisted truth), re-read — debounced — on
- * every change of this deployment's live deploy job in the renderer job store
- * (event-driven; no polling interval). The log pane / per-object status /
+ * every change of this deployment's live deploy job in the renderer job store,
+ * with a 3 s floor while the job runs (UI-4); both go through one guarded
+ * path (`useGuardedRefresh`, S64 P5). The log pane / per-object status /
  * results grid are 5C.1-full (D4/D5-full) and deliberately absent here.
  */
-
-const REFETCH_DEBOUNCE_MS = 400
-
-/**
- * Backstop cadence for the run's long tail (UI-4). Deliberately slow: one
- * `deployRunState` read, whose counter views are 25 ms since migration 007.
- */
-const TAIL_POLL_MS = 3000
 
 const TERMINAL_PHASES = new Set(['Completed', 'Failed', 'Cancelled'])
 
@@ -75,17 +77,10 @@ export function DeploymentDetailPage(): React.JSX.Element {
 
   const [state, setState] = useState<DeployRunStateView | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  const load = useCallback(async (): Promise<void> => {
-    if (!validId) return
-    try {
-      const next = await callIpc(() => window.rds.deployRunState(deploymentId))
-      setState(next)
-      setError(null)
-    } catch (e) {
-      setError(toRdsError(e).message)
-    }
-  }, [deploymentId, validId])
+  // S64 (P3, ux F-6): when the persisted view was last read, and a once-a-second clock
+  // (ticking only while a job runs) for the "updated Ns ago" stamp.
+  const [loadedAt, setLoadedAt] = useState<number | null>(null)
+  const [now, setNow] = useState(() => Date.now())
 
   // S52 F4 — delete (guarded main-side; see canDeleteDeployment). Confirm first;
   // nothing in either org is touched by a delete.
@@ -118,27 +113,14 @@ export function DeploymentDetailPage(): React.JSX.Element {
   }, [deploymentId])
 
   // Live job (renderer store, fed by the single job-event stream). Any change
-  // to it — status, phase, progress — schedules one debounced re-read of the
-  // persisted state, so status/counters/error track the run without polling.
+  // to it — status, phase, progress — requests one debounced re-read of the
+  // persisted state, so status/counters/error track the run (the fast path).
   const liveJob = useLatestJobForDeployment(deploymentId, 'deploy')
   // `label` is part of the key: a progress event that advances only its label
   // (which is what per-item restore progress looks like) must still invalidate.
   const jobKey = liveJob
     ? `${liveJob.id}|${liveJob.status}|${liveJob.phase ?? ''}|${liveJob.progress?.value ?? ''}/${liveJob.progress?.max ?? ''}|${liveJob.progress?.label ?? ''}`
     : ''
-  useEffect(() => {
-    let cancelled = false
-    const t = setTimeout(
-      () => {
-        if (!cancelled) void load()
-      },
-      jobKey === '' ? 0 : REFETCH_DEBOUNCE_MS
-    )
-    return () => {
-      cancelled = true
-      clearTimeout(t)
-    }
-  }, [load, jobKey])
 
   // UI-4 backstop. `jobKey` changes only on a phase transition or a progress
   // event, and `emitProgress` has exactly ONE call site — the first-pass walk
@@ -146,15 +128,29 @@ export function DeploymentDetailPage(): React.JSX.Element {
   // automation restore therefore emit nothing that invalidates it, so the
   // persisted view froze for minutes at a time and showed a stale phase and a
   // stale current object while the run was elsewhere. Event-driven refresh
-  // stays the fast path; this only guarantees a floor. It is the least elegant
-  // fix and the most robust: a future long phase that forgets to emit cannot
-  // reintroduce the freeze.
+  // stays the fast path; the poll only guarantees a floor. It is the least
+  // elegant fix and the most robust: a future long phase that forgets to emit
+  // cannot reintroduce the freeze. Both paths share the guarded `load` (P5 5.4).
   const jobIsRunning = (liveJob ?? state?.job)?.status === 'running'
+  const onLoaded = useCallback((next: DeployRunStateView): void => {
+    setState(next)
+    setError(null)
+    setLoadedAt(Date.now())
+  }, [])
+  const load = useGuardedRefresh<DeployRunStateView>({
+    key: deploymentId,
+    enabled: validId,
+    fetch: () => window.rds.deployRunState(deploymentId),
+    onLoaded,
+    onError: setError,
+    jobKey,
+    polling: jobIsRunning
+  })
   useEffect(() => {
     if (!jobIsRunning) return
-    const t = setInterval(() => void load(), TAIL_POLL_MS)
+    const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
-  }, [jobIsRunning, load])
+  }, [jobIsRunning])
 
   if (!validId) {
     return (
@@ -170,7 +166,7 @@ export function DeploymentDetailPage(): React.JSX.Element {
         <h1>Deployment {deploymentId}</h1>
         <div className="banner">
           {error}{' '}
-          <button className="btn" onClick={() => void load()}>
+          <button className="btn" onClick={load}>
             Retry
           </button>
         </div>
@@ -219,6 +215,11 @@ export function DeploymentDetailPage(): React.JSX.Element {
   const stalled = run?.phase === 'Stalled'
   const stranded = run != null && !stalled && !TERMINAL_PHASES.has(run.phase) && !jobRunning
   const finishedRun = run != null && TERMINAL_PHASES.has(run.phase)
+  // F-3: the job is live but no run row exists yet — the engine is connecting, checking
+  // gates and freezing the plan, and has emitted no phase of its own.
+  const preRunChecklist = jobRunning && run == null
+  const hasJunction = objects.some((o) => o.isJunction)
+  const secondsAgo = loadedAt == null ? null : Math.max(0, Math.round((now - loadedAt) / 1000))
 
   return (
     <>
@@ -227,7 +228,12 @@ export function DeploymentDetailPage(): React.JSX.Element {
         <p className="sub">
           {deployment.sourceLabel} → {deployment.targetLabel} ·{' '}
           <Badge tone={statusTone(status)}>{status}</Badge>
-          {phase && phase !== status && <span className="muted"> · phase: {phase}</span>}
+          {phase && phase !== status && (
+            <span className="muted" title={phase}>
+              {' '}
+              · phase: {phaseLabel(phase)}
+            </span>
+          )}
           {run?.currentObject && !finishedRun && !inTeardown && (
             <span className="muted">
               {' '}
@@ -250,31 +256,41 @@ export function DeploymentDetailPage(): React.JSX.Element {
           <div className="job-card-head">
             <span>
               {job.title}
-              {job.phase ? ` — ${job.phase}` : ''}
+              {job.phase ? ` — ${phaseLabel(job.phase)}` : ''}
+              {secondsAgo != null && (
+                <span className="muted last-updated" data-testid="last-updated">
+                  {' '}
+                  · updated {secondsAgo}s ago
+                </span>
+              )}
             </span>
             {/*
              * Cancel is withdrawn once teardown starts. There is nothing left
              * to cancel — the data passes are done and `checkCancel` is only
              * consulted at batch boundaries — while interrupting the restore is
              * the one action that can leave the target's automation disabled.
+             * A-9: the reason is visible helper text, not only a `title`.
              */}
-            <button
-              className="btn"
-              disabled={run?.cancelRequested === true || inTeardown}
-              onClick={() => void window.rds.jobCancel(job.id)}
-              title={
-                inTeardown
-                  ? 'Automation is being restored — interrupting it is the one thing that could leave the target disabled.'
-                  : 'Stops at the next batch boundary, then restores automation and audits the run. ' +
-                    'Records already written stay on the target; a later re-run updates them in place.'
-              }
-            >
-              {inTeardown
-                ? 'Restoring — cannot cancel'
-                : run?.cancelRequested
-                  ? 'Cancel requested…'
-                  : 'Cancel'}
-            </button>
+            {inTeardown ? (
+              <CancelJobButton
+                jobId={job.id}
+                label="Restoring — cannot cancel"
+                disabled
+                helper="Automation is being restored — interrupting it is the one thing that could leave the target disabled."
+              />
+            ) : run?.cancelRequested ? (
+              <CancelJobButton
+                jobId={job.id}
+                label="Cancel requested…"
+                disabled
+                helper="Stopping at the next batch boundary; automation restore still runs afterwards."
+              />
+            ) : (
+              <CancelJobButton
+                jobId={job.id}
+                helper="Stops at the next batch, then restores automation and audits the run. Records already written stay on the target."
+              />
+            )}
           </div>
           {job.progress && (
             <ProgressBar
@@ -283,12 +299,30 @@ export function DeploymentDetailPage(): React.JSX.Element {
               label={job.progress.label}
             />
           )}
-          {run?.cancelRequested && (
-            <p className="muted">
-              Stopping at the next batch boundary; automation restore still runs afterwards.
-            </p>
+          {preRunChecklist && (
+            <ol className="prerun-steps" aria-label="Before the run starts" data-testid="prerun-phases">
+              {PRE_RUN_PHASES.map((p) => (
+                <li key={p}>
+                  <span className="prerun-mark" aria-hidden="true">
+                    …
+                  </span>
+                  {p}
+                </li>
+              ))}
+            </ol>
           )}
         </div>
+      )}
+
+      {/* S64 P5 (5.1): where the run's time went, from the persisted phase stamps (migration 014). */}
+      {run && (
+        <PhaseStrip
+          phases={run.phases}
+          finishedAt={run.finishedAt}
+          now={now}
+          running={jobRunning}
+          peakMemoryMB={run.peakMemoryMB}
+        />
       )}
 
       {preRunFailure && (
@@ -307,7 +341,7 @@ export function DeploymentDetailPage(): React.JSX.Element {
               <Link to={`/deployments/${deploymentId}/wizard/readiness`}>
                 Open the Readiness step
               </Link>{' '}
-              — Provision creates the missing External ID field(s) and grants the connected user
+              — it creates the missing External Id field(s) and grants the connected user
               access to them; then deploy again from the plan.
             </p>
           ) : (
@@ -394,8 +428,8 @@ export function DeploymentDetailPage(): React.JSX.Element {
 
       {preRunUnkeyed.length > 0 && (
         <div className="banner warn">
-          <strong>Before this run</strong> the target already held rows without the RDS key under
-          RDS-keyed parents:{' '}
+          <strong>Before this run</strong> the target already held rows without this app&rsquo;s
+          External Id under parents that have it:{' '}
           {preRunUnkeyed
             .map((f) => `${f.objectApiName} (${f.count.toLocaleString()} under ${f.refObject})`)
             .join(', ')}
@@ -415,7 +449,7 @@ export function DeploymentDetailPage(): React.JSX.Element {
       {finishedRun && status === 'Cancelled' && (
         <div className="banner warn">
           <strong>Deployment cancelled.</strong> Records written before the cancel remain on the
-          target (upserts are idempotent — re-running updates them);{' '}
+          target (re-running updates the same rows);{' '}
           {state.restoreUnconfirmed === 0
             ? 'automation was restored.'
             : 'automation restore did not fully confirm — see below.'}
@@ -439,29 +473,31 @@ export function DeploymentDetailPage(): React.JSX.Element {
 
       {(state.stages?.length ?? 0) > 0 && <StagesStrip stages={state.stages!} />}
 
+      {/* T-8: planned first, then the run's funnel; every tile says what it counts. */}
       {counters && (
         <div className="kpi-row">
-          <Kpi label="queried" value={counters.recordsQueried} />
-          <Kpi label="deployed" value={counters.recordsDeployed} />
+          <Kpi label="Planned" value={state.totalRecords} hint={GLOSSARY.planned} />
+          <Kpi label="Queried" value={counters.recordsQueried} hint={GLOSSARY.queried} />
+          <Kpi label="Deployed" value={counters.recordsDeployed} hint={GLOSSARY.deployed} />
           <Kpi
-            label="failed"
+            label="Failed"
             value={counters.recordsFailed}
             tone={counters.recordsFailed > 0 ? 'danger' : undefined}
+            hint={GLOSSARY.failed}
           />
-          <Kpi label="skipped" value={counters.recordsSkipped} />
+          <Kpi label="Skipped" value={counters.recordsSkipped} hint={GLOSSARY.skipped} />
           {(counters.recordsAlreadyOnTarget ?? 0) > 0 && (
-            <Kpi label="already on target" value={counters.recordsAlreadyOnTarget ?? 0} />
+            <Kpi label="Already on target" value={counters.recordsAlreadyOnTarget ?? 0} hint={GLOSSARY.alreadyOnTarget} />
           )}
-          {relinkTotals.relinked > 0 && <Kpi label="relinked" value={relinkTotals.relinked} />}
+          {relinkTotals.relinked > 0 && <Kpi label="Relinked" value={relinkTotals.relinked} hint={GLOSSARY.relinked} />}
           {relinkTotals.unresolved > 0 && (
-            <Kpi label="unresolved Ids" value={relinkTotals.unresolved} tone="danger" />
+            <Kpi label="Unresolved Ids" value={relinkTotals.unresolved} tone="danger" hint={GLOSSARY.unresolved} />
           )}
-          <Kpi label="planned" value={state.totalRecords} />
         </div>
       )}
 
       {objects.length > 0 && (
-        <table className="orgs">
+        <table className="orgs run-objects">
           <thead>
             <tr>
               <th>#</th>
@@ -471,17 +507,24 @@ export function DeploymentDetailPage(): React.JSX.Element {
               <th className="num">Deployed</th>
               <th className="num">Failed</th>
               <th className="num">Skipped</th>
+              {jobRunning && !finishedRun && <th>Progress</th>}
             </tr>
           </thead>
           <tbody>
-            {objects.map((o, i) => (
-              <tr key={o.objectName}>
+            {objects.map((o, i) => {
+              const current = run?.currentObject === o.objectName && !finishedRun && jobRunning
+              const handled = o.recordsDeployed + o.recordsFailed + o.recordsSkipped
+              return (
+              <tr key={o.objectName} className={current ? 'current' : undefined} aria-current={current ? 'step' : undefined}>
                 <td className="num">{i + 1}</td>
                 <td>
-                  {o.objectName} {o.isJunction && <Badge tone="accent">junction</Badge>}
-                  {run?.currentObject === o.objectName && !finishedRun && jobRunning && (
-                    <Badge tone="accent">current</Badge>
+                  {o.objectName}{' '}
+                  {o.isJunction && (
+                    <span className="badge badge-accent" title={GLOSSARY.junction}>
+                      junction
+                    </span>
                   )}
+                  {current && <Badge tone="accent">current</Badge>}
                 </td>
                 <td className="num">{o.recordCount.toLocaleString()}</td>
                 <td className="num">{o.recordsQueried.toLocaleString()}</td>
@@ -500,10 +543,21 @@ export function DeploymentDetailPage(): React.JSX.Element {
                     <span className="muted already-note"> ({o.recordsAlreadyOnTarget} already on target)</span>
                   )}
                 </td>
+                {jobRunning && !finishedRun && (
+                  <td className="mini-progress">
+                    <MiniBar done={handled} total={o.recordCount} />
+                  </td>
+                )}
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
+      )}
+      {hasJunction && (
+        <p className="muted legend">
+          <span className="badge badge-accent">junction</span> {GLOSSARY.junction}
+        </p>
       )}
 
       {relinks.length > 0 && <RelinkTable rows={relinks} />}
@@ -517,6 +571,19 @@ export function DeploymentDetailPage(): React.JSX.Element {
         <Link className="btn" to="/">
           Home
         </Link>
+        {finishedRun && counters && counters.recordsFailed > 0 && (
+          <button
+            className="btn"
+            onClick={() =>
+              void window.rds
+                .deployExportFailures(deploymentId)
+                .then((p) => p && toast(`Saved the failure list to ${p}`, 'success'))
+                .catch((e: unknown) => toast(toRdsError(e).message, 'error'))
+            }
+          >
+            Export failure list (JSON)
+          </button>
+        )}
         {canEditPlan(status) && (
           <Link className="btn" to={`/deployments/${deploymentId}/wizard/plan`}>
             Open plan
@@ -599,6 +666,118 @@ function RelinkTable({ rows }: { rows: TextIdRelinkSummaryView[] }): React.JSX.E
   )
 }
 
+/**
+ * S64 P5 (5.1): phases that are a moment, not a span. They end the previous
+ * segment and get no segment of their own. (Stalled is the lead's three plus
+ * one: a stalled teardown has no finishedAt, so a segment for it would grow
+ * forever. `Finished` is the handler's end-of-job stamp after the post-run
+ * audit, which runs AFTER the engine's terminal phase.)
+ */
+const PHASE_STAMP_ONLY = new Set(['Completed', 'Failed', 'Cancelled', 'Stalled', 'Finished'])
+
+export interface PhaseSegment {
+  phase: string
+  start: number
+  /** Null when the span is open with no clock to run it to (a stranded run). */
+  end: number | null
+  /** The last segment while the job runs — its duration is still growing. */
+  current: boolean
+}
+
+/**
+ * Stamps → segments. Each phase runs to the next stamp; the last runs to
+ * `finishedAt`, else to `now` while the job runs, else is open. Adjacent
+ * stamps with the same name (the engine re-enters a phase) merge into one
+ * segment — since they abut, extending the end IS summing the durations.
+ */
+export function phaseSegments(
+  phases: DeployRunPhaseStamp[] | undefined,
+  finishedAt: number | null,
+  now: number,
+  running: boolean
+): PhaseSegment[] {
+  if (!phases || phases.length < 2) return []
+  const out: PhaseSegment[] = []
+  let prevIndex = -2
+  for (let i = 0; i < phases.length; i++) {
+    const stamp = phases[i]!
+    if (PHASE_STAMP_ONLY.has(stamp.phase)) continue
+    const next = phases[i + 1]
+    const last = next == null
+    // The last stamp runs to finishedAt only if it started BEFORE the run
+    // finished (the post-run audit starts after it, and ends at `Finished`).
+    const toFinish = finishedAt != null && finishedAt >= stamp.at ? finishedAt : null
+    const end = next ? next.at : (toFinish ?? (running ? now : null))
+    const prev = out[out.length - 1]
+    if (prev && prevIndex === i - 1 && prev.phase === stamp.phase) {
+      prev.end = end
+      prev.current = last && running
+    } else {
+      out.push({ phase: stamp.phase, start: stamp.at, end, current: last && running })
+    }
+    prevIndex = i
+  }
+  return out
+}
+
+const MEMORY_ORDER = ['main', 'renderer', 'gpu']
+
+/** "Peak memory: main N MB · renderer N MB · gpu N MB" — the known processes first, any others after. */
+export function peakMemoryLine(peak: Record<string, number> | null | undefined): string | null {
+  if (!peak) return null
+  const keys = Object.keys(peak)
+  if (keys.length === 0) return null
+  const ordered = [...MEMORY_ORDER.filter((k) => k in peak), ...keys.filter((k) => !MEMORY_ORDER.includes(k)).sort()]
+  return `Peak memory: ${ordered.map((k) => `${k} ${Math.round(peak[k]!).toLocaleString()} MB`).join(' · ')}`
+}
+
+/**
+ * S64 P5 (5.1): where the run's time went. One segment per phase span from the
+ * persisted `run_phases` stamps; nothing for pre-014 runs (no stamps) or a run
+ * with a single stamp. The current segment ticks with the page's clock.
+ */
+function PhaseStrip({
+  phases,
+  finishedAt,
+  now,
+  running,
+  peakMemoryMB
+}: {
+  phases: DeployRunPhaseStamp[] | undefined
+  finishedAt: number | null
+  now: number
+  running: boolean
+  peakMemoryMB: Record<string, number> | null | undefined
+}): React.JSX.Element | null {
+  const segments = phaseSegments(phases, finishedAt, now, running)
+  const memory = peakMemoryLine(peakMemoryMB)
+  if (segments.length === 0 && memory == null) return null
+  return (
+    <section className="phase-strip" aria-label="Run phases" data-testid="phase-strip">
+      {segments.length > 0 && (
+        <ol className="phase-strip-list">
+          {segments.map((s) => (
+            <li
+              key={`${s.phase}-${s.start}`}
+              className={s.current ? 'phase-strip-seg current' : 'phase-strip-seg'}
+              aria-current={s.current ? 'step' : undefined}
+              title={s.phase}
+            >
+              <span className="phase-strip-name">{phaseLabel(s.phase)}</span>
+              <span className="phase-strip-time">{fmtDuration(s.start, s.end)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {memory != null && (
+        <p className="muted phase-strip-memory" data-testid="peak-memory">
+          {memory}
+        </p>
+      )}
+    </section>
+  )
+}
+
 function StagesStrip({ stages }: { stages: DeployStageView[] }): React.JSX.Element {
   return (
     <section className="stages" aria-label="Stages">
@@ -646,14 +825,17 @@ function stageTone(state: DeployStageView['state']): BadgeTone {
 function Kpi({
   label,
   value,
-  tone
+  tone,
+  hint
 }: {
   label: string
   value: number
   tone?: 'danger'
+  /** One line from GLOSSARY, shown on hover (ux T-8: KPIs did not explain themselves). */
+  hint?: string
 }): React.JSX.Element {
   return (
-    <div className="kpi">
+    <div className="kpi" title={hint}>
       <span className={tone === 'danger' && value > 0 ? 'kpi-value status-err' : 'kpi-value'}>
         {value.toLocaleString()}
       </span>
@@ -662,13 +844,28 @@ function Kpi({
   )
 }
 
+/** Per-row deployed/planned bar for the live table (ux F-6). Decorative; the text carries the numbers. */
+function MiniBar({ done, total }: { done: number; total: number }): React.JSX.Element {
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+  return (
+    <>
+      <span className="mini-bar" aria-hidden="true">
+        <span className="mini-bar-fill" style={{ width: `${pct}%` }} />
+      </span>
+      <span className="mini-bar-text muted">
+        {done.toLocaleString()} / {total.toLocaleString()}
+      </span>
+    </>
+  )
+}
+
 /** The E2 manual-restore steps (shared copy — identical to the job error text). */
 function RestoreSteps(): React.JSX.Element {
   return (
     <>
       <p>
-        Restore the target&rsquo;s automation manually, in this order. The app&rsquo;s ledger
-        (automation_ledger_mirror in the app database) lists exactly which items it disabled.
+        Restore the target&rsquo;s automation manually, in this order. The app recorded exactly which
+        items it disabled before changing them; the steps below are in restore order.
       </p>
       <ol className="restore-steps">
         {MANUAL_RESTORE_STEPS.map((s) => (

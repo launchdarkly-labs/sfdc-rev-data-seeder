@@ -1,24 +1,28 @@
 import { useEffect, useState } from 'react'
 import type { ObjectReadiness, ProvisionExtIdsSummary } from '../../../../shared/types'
-import {
+import { nextLabel,
   readinessBlockingObjects,
   readinessGate,
   readinessGateMessage,
   readinessScopeKey,
   readinessUnfixableObjects
 } from '../../../../shared/wizard'
+import { GLOSSARY } from '../../../../shared/labels'
 import { cannotHostExplanation } from '../../../../shared/extIdCapability'
 import { useIpcQuery } from '../../ipc/hooks'
 import { callIpc, toRdsError } from '../../ipc/client'
 import { useWizard } from './WizardShell'
 
+/** The one API name this step shows (ux T-2: prose says "the External Id field"; the name appears once, in code). */
+const EXT_ID_API_NAME = 'Data_Deployment_External_Id__c'
+
 /**
  * Wizard Step 3 — Readiness. Read-only check that the TARGET org has the
- * seeder's ExtId upsert-key field (`Data_Deployment_External_Id__c`) on each
+ * seeder's External Id upsert-key field (`Data_Deployment_External_Id__c`) on each
  * in-scope object. Junctions are exempt. A footprint line previews the deploy's
  * object count.
  *
- * S54 (L1): this step is a HARD STOP. A non-junction object whose ExtId field
+ * S54 (L1): this step is a HARD STOP. A non-junction object whose External Id field
  * is missing / not an External Id / FLS-hidden — or that cannot be described —
  * renders RED and closes `readinessGate`: Next, the step nav, Analyze and
  * Deploy all consult the same predicate (shared/wizard.ts). The outcome of
@@ -30,6 +34,10 @@ import { useWizard } from './WizardShell'
  * for the whole scope, because creating the field is only half the job — the
  * field also needs field-level security before describe can see it, and FLS is
  * granted once, per permission set, not per object.
+ *
+ * S64 (P3, ux F-2): while that one action runs, each object it will create a
+ * field on shows "…" in its row; the refetch that follows ticks them. The IPC
+ * reports no per-object progress, so this is the honest minimum.
  */
 export function StepReadiness(): React.JSX.Element {
   const { deploymentId, config, goToStep, updateConfig } = useWizard()
@@ -62,12 +70,24 @@ export function StepReadiness(): React.JSX.Element {
 
   const gate = readinessGate(config)
 
-  const [provisioning, setProvisioning] = useState(false)
+  const [provisioning, setProvisioning] = useState<string[] | null>(null)
   const [summary, setSummary] = useState<ProvisionExtIdsSummary | null>(null)
   const [provisionError, setProvisionError] = useState<string | null>(null)
 
+  // Provisioning can only ADD a truly-absent field; a same-named field that
+  // isn't flagged External Id must be converted manually (metadata.create would
+  // DUPLICATE it), so those objects are called out separately and excluded from
+  // the count on the button.
+  const creatable = (data?.objects ?? []).filter(
+    (o) => o.needsExtIdField && !o.hasExtIdField && !o.describeError && !o.cannotHostCustomField
+  )
+  const unfixable = data ? readinessUnfixableObjects(data) : []
+  const needsManualFlag = (data?.objects ?? []).filter((o) => o.needsExtIdField && o.hasExtIdField)
+  const failureFor = (objectName: string): string | undefined =>
+    summary?.failures.find((f) => f.objectName === objectName)?.error
+
   const provision = async (): Promise<void> => {
-    setProvisioning(true)
+    setProvisioning(creatable.map((o) => o.objectName))
     setProvisionError(null)
     setSummary(null)
     try {
@@ -75,12 +95,13 @@ export function StepReadiness(): React.JSX.Element {
     } catch (e) {
       setProvisionError(toRdsError(e).message)
     } finally {
-      setProvisioning(false)
+      setProvisioning(null)
       // Always re-check against the LIVE target — a partial run still moved some
       // objects forward, so reflect reality either way.
       refetch()
     }
   }
+  const busy = provisioning != null
 
   // S57 (B4): the only fix for an object that can never carry the key.
   const deselect = (objectName: string): void => {
@@ -98,49 +119,66 @@ export function StepReadiness(): React.JSX.Element {
   const statusCell = (o: ObjectReadiness): React.JSX.Element => {
     if (o.describeError) {
       return (
-        <span className="status-err" title={o.describeError}>
-          ✗ could not describe on target
+        <div className="status-err">
+          <Glyph kind="err" /> could not describe on target
+          <details className="learn-more">
+            <summary>Why</summary>
+            <pre className="error-text">{o.describeError}</pre>
+          </details>
+        </div>
+      )
+    }
+    if (o.isJunction)
+      return (
+        <span className="muted" title={GLOSSARY.junction}>
+          n/a (junction)
+        </span>
+      )
+    if (!o.needsExtIdField)
+      return (
+        <span className="status-ok">
+          <Glyph kind="ok" /> External Id present
+        </span>
+      )
+    // S57 (B4): permanently red — provisioning cannot help; the Notes column says why.
+    if (o.cannotHostCustomField) {
+      return (
+        <span className="status-err">
+          <Glyph kind="err" /> can&apos;t carry a custom field
         </span>
       )
     }
-    if (o.isJunction) return <span className="muted">n/a (junction)</span>
-    if (!o.needsExtIdField) return <span className="status-ok">✓ External Id present</span>
-    // S57 (B4): permanently red — provisioning cannot help; the Notes column says why.
-    if (o.cannotHostCustomField) {
-      return <span className="status-err">✗ can&apos;t carry a custom field</span>
+    if (provisioning != null && provisioning.includes(o.objectName)) {
+      return (
+        <span className="muted" data-testid={`provisioning-${o.objectName}`}>
+          <span aria-hidden="true">…</span> creating the field and granting access
+        </span>
+      )
     }
     // RED, not yellow (S54 L1): this row blocks the deploy.
     return (
       <span className="status-err">
-        {o.hasExtIdField
-          ? '✗ field exists but is not an External Id'
-          : '✗ missing External Id field'}
+        <Glyph kind="err" />{' '}
+        {o.hasExtIdField ? 'field exists but is not an External Id' : 'missing External Id field'}
       </span>
     )
   }
-
-  // Provisioning can only ADD a truly-absent field; a same-named field that
-  // isn't flagged External Id must be converted manually (metadata.create would
-  // DUPLICATE it), so those objects are called out separately and excluded from
-  // the count on the button.
-  const creatable = (data?.objects ?? []).filter(
-    (o) => o.needsExtIdField && !o.hasExtIdField && !o.describeError && !o.cannotHostCustomField
-  )
-  const unfixable = data ? readinessUnfixableObjects(data) : []
-  const needsManualFlag = (data?.objects ?? []).filter((o) => o.needsExtIdField && o.hasExtIdField)
-  const failureFor = (objectName: string): string | undefined =>
-    summary?.failures.find((f) => f.objectName === objectName)?.error
 
   return (
     <>
       <h2>Readiness</h2>
       <p className="sub">
-        The seeder upserts each object by a dedicated External Id field on the target. Create the
-        missing ones in one step below — junctions are matched by their lookup pair and need no
-        field.
+        Re-running a deployment updates the same rows because each object carries the External Id
+        field this app adds on the target. Create the missing ones in one step below — junctions
+        are matched by their lookup pair and need no field.
       </p>
 
-      {loading && <p className="muted">Checking the target…</p>}
+      {loading && (
+        <p className="muted" role="status">
+          Checking the target…
+          <span className="spinner" aria-hidden="true" />
+        </p>
+      )}
       {error && (
         <div className="banner">
           {error.message}{' '}
@@ -169,23 +207,24 @@ export function StepReadiness(): React.JSX.Element {
             <button
               className="btn primary"
               onClick={() => void provision()}
-              disabled={provisioning || creatable.length === 0}
+              disabled={busy || creatable.length === 0}
             >
-              {provisioning
+              {busy
                 ? 'Creating fields and granting access…'
                 : creatable.length === 0
                   ? 'All External Id fields present'
                   : `Create ${creatable.length} External Id field${creatable.length === 1 ? '' : 's'}`}
+              {busy && <span className="spinner" aria-hidden="true" />}
             </button>
-            <button className="btn" onClick={refetch} disabled={provisioning}>
+            <button className="btn" onClick={refetch} disabled={busy}>
               Re-check target
             </button>
           </div>
           <p className="muted">
-            Creates <code>Data_Deployment_External_Id__c</code> on every object that needs it, then
-            grants your user read/edit on those fields through a permission set the app manages
-            (&ldquo;RDS Deployment Access&rdquo;). Without that grant the field exists but stays
-            invisible to the API.
+            Creates the External Id field (<code>{EXT_ID_API_NAME}</code>) on every object that needs
+            it, then grants your user read/edit on those fields through a permission set the app
+            manages (&ldquo;RDS Deployment Access&rdquo;). Without that grant the field exists but
+            stays invisible to the API.
           </p>
 
           {provisionError && <div className="banner">{provisionError}</div>}
@@ -244,16 +283,19 @@ export function StepReadiness(): React.JSX.Element {
                           <button
                             className="btn btn-small"
                             onClick={() => deselect(o.objectName)}
-                            disabled={provisioning}
+                            disabled={busy}
                           >
                             Deselect {o.objectName}
                           </button>
                         </>
                       ) : (
                         err && (
-                          <span className="status-err" title={err}>
-                            ✗ {err.slice(0, 90)}
-                          </span>
+                          <details className="verify-error">
+                            <summary className="status-err">
+                              <Glyph kind="err" /> Could not create the field — show the error
+                            </summary>
+                            <pre className="error-text">{err}</pre>
+                          </details>
                         )
                       )}
                       {!err && o.needsExtIdField && o.hasExtIdField && (
@@ -267,12 +309,17 @@ export function StepReadiness(): React.JSX.Element {
               })}
             </tbody>
           </table>
+          {data.junctionCount > 0 && (
+            <p className="muted legend">
+              <strong>junction</strong> — {GLOSSARY.junction}
+            </p>
+          )}
 
           {needsManualFlag.length > 0 && (
             <div className="banner warn">
               {needsManualFlag.length} object{needsManualFlag.length === 1 ? ' has' : 's have'} a
-              field named <code>Data_Deployment_External_Id__c</code> that is not flagged as an
-              External Id. The app will not touch those — flag them in Setup, then re-check.
+              field with the External Id API name above that is not flagged as an External Id. The
+              app will not touch those — flag them in Setup, then re-check.
             </div>
           )}
 
@@ -303,11 +350,24 @@ export function StepReadiness(): React.JSX.Element {
               disabled={gate.blocked}
               title={gate.blocked ? readinessGateMessage(gate) : undefined}
             >
-              Next: mappings
+              {nextLabel('mappings')}
             </button>
           </div>
+          {/* F-8 / A-9: the reason Next is disabled, visible — not only in `title`. */}
+          {gate.blocked && (
+            <p className="muted deploy-gate-note" data-testid="readiness-gate-note">
+              {gate.reason === 'blocked'
+                ? 'Next is disabled until every object above has a usable External Id field.'
+                : readinessGateMessage(gate)}
+            </p>
+          )}
         </>
       )}
     </>
   )
+}
+
+/** Decorative ✓ / ✗ — the words beside it carry the meaning (ux A-12). */
+function Glyph({ kind }: { kind: 'ok' | 'err' }): React.JSX.Element {
+  return <span aria-hidden="true">{kind === 'ok' ? '✓' : '✗'}</span>
 }

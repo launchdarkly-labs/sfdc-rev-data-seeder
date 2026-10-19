@@ -5,6 +5,7 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ConnectionsPage } from '../../src/renderer/src/pages/Connections'
 import { encodeRdsError, type OrgConnection, type OAuthBeginInput } from '../../src/shared/types'
+import { PROD_ORG_ID_PREFIX } from '../../src/shared/types'
 
 function conn(over: Partial<OrgConnection>): OrgConnection {
   return {
@@ -56,7 +57,9 @@ beforeEach(() => {
     oauthDisconnect: vi.fn(async (id: string) => {
       disconnected = id
       return [cliRow]
-    })
+    }),
+    settingsGet: vi.fn(async () => null),
+    settingsSet: vi.fn(async () => undefined)
   }
 })
 
@@ -219,7 +222,8 @@ describe('ConnectionsPage — role persistence feedback', () => {
     // Persisted through IPC on change — there is no Save button to press.
     const rds = (window as unknown as { rds: { setOrgRole: ReturnType<typeof vi.fn> } }).rds
     expect(rds.setOrgRole).toHaveBeenCalledWith('srcbox', 'target')
-    expect(await screen.findByText('✓ Saved')).toBeInTheDocument()
+    // ux A-12: the tick is decorative (aria-hidden); the word carries the meaning.
+    expect(await screen.findByText(/Saved/)).toBeInTheDocument()
   })
 
   it('does not claim a save when the write is rejected', async () => {
@@ -242,6 +246,91 @@ describe('ConnectionsPage — role persistence feedback', () => {
     await waitFor(() =>
       expect(screen.getByText(/permanently read-only/)).toBeInTheDocument()
     )
-    expect(screen.queryByText('✓ Saved')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Saved/)).not.toBeInTheDocument()
+  })
+})
+
+// S64 P6 (D6): the production pin is a runtime setting edited here.
+describe('ConnectionsPage — production pin', () => {
+  const rds = (): { settingsGet: ReturnType<typeof vi.fn>; settingsSet: ReturnType<typeof vi.fn>; listOrgs: ReturnType<typeof vi.fn> } =>
+    (window as unknown as { rds: never }).rds
+
+  it('shows the compiled default when nothing is stored', async () => {
+    render(<ConnectionsPage />)
+    await screen.findByText('my-sandbox')
+    const input = screen.getByLabelText('Production org Id') as HTMLInputElement
+    await waitFor(() => expect(input.value).toBe(PROD_ORG_ID_PREFIX))
+    expect(screen.getByText(/the default this build ships with/)).toBeInTheDocument()
+    expect(screen.queryByText('Reset to default')).not.toBeInTheDocument()
+    // Nothing to save until the value changes.
+    expect(screen.getByRole('button', { name: 'Save pin' })).toBeDisabled()
+  })
+
+  it('shows a stored pin (normalised to 15 characters) and offers Reset', async () => {
+    rds().settingsGet = vi.fn(async () => '00D000000Fake99EAA')
+    render(<ConnectionsPage />)
+    const input = screen.getByLabelText('Production org Id') as HTMLInputElement
+    await waitFor(() => expect(input.value).toBe('00D000000Fake99'))
+    expect(await screen.findByText('Reset to default')).toBeInTheDocument()
+  })
+
+  it('saves a new Org Id through IPC and re-reads the connection list', async () => {
+    const user = userEvent.setup()
+    render(<ConnectionsPage />)
+    await screen.findByText('my-sandbox')
+    const input = screen.getByLabelText('Production org Id') as HTMLInputElement
+    await waitFor(() => expect(input.value).toBe(PROD_ORG_ID_PREFIX))
+    const listCalls = rds().listOrgs.mock.calls.length
+
+    await user.clear(input)
+    await user.type(input, ' 00D000000Fake99EAA ')
+    await user.click(screen.getByRole('button', { name: 'Save pin' }))
+
+    await waitFor(() => expect(rds().settingsSet).toHaveBeenCalledWith('prodOrgIdPrefix', '00D000000Fake99'))
+    expect(await screen.findByText(/Saved — pinned/)).toBeInTheDocument()
+    expect(rds().listOrgs.mock.calls.length).toBeGreaterThan(listCalls)
+    expect(screen.getByText('Reset to default')).toBeInTheDocument()
+  })
+
+  it('refuses a value that is not an Org Id without calling IPC', async () => {
+    const user = userEvent.setup()
+    render(<ConnectionsPage />)
+    await screen.findByText('my-sandbox')
+    const input = screen.getByLabelText('Production org Id') as HTMLInputElement
+    await waitFor(() => expect(input.value).toBe(PROD_ORG_ID_PREFIX))
+
+    await user.clear(input)
+    await user.type(input, 'production')
+    await user.click(screen.getByRole('button', { name: 'Save pin' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Org Id/)
+    expect(rds().settingsSet).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a main-side rejection as the message, not a raw envelope', async () => {
+    const user = userEvent.setup()
+    rds().settingsSet = vi.fn(async () => {
+      throw new Error(encodeRdsError({ code: 'INVALID_STATE', message: 'A production pin must be a Salesforce Org Id.' }))
+    })
+    render(<ConnectionsPage />)
+    await screen.findByText('my-sandbox')
+    const input = screen.getByLabelText('Production org Id') as HTMLInputElement
+    await waitFor(() => expect(input.value).toBe(PROD_ORG_ID_PREFIX))
+
+    await user.clear(input)
+    await user.type(input, '00D000000Fake99')
+    await user.click(screen.getByRole('button', { name: 'Save pin' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('A production pin must be a Salesforce Org Id.')
+    expect(screen.queryByText(/Saved — pinned/)).not.toBeInTheDocument()
+  })
+
+  it('Reset to default writes the compiled constant', async () => {
+    const user = userEvent.setup()
+    rds().settingsGet = vi.fn(async () => '00D000000Fake99')
+    render(<ConnectionsPage />)
+    await user.click(await screen.findByText('Reset to default'))
+    await waitFor(() => expect(rds().settingsSet).toHaveBeenCalledWith('prodOrgIdPrefix', PROD_ORG_ID_PREFIX))
+    await waitFor(() => expect((screen.getByLabelText('Production org Id') as HTMLInputElement).value).toBe(PROD_ORG_ID_PREFIX))
   })
 })

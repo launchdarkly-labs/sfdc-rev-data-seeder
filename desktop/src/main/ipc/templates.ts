@@ -42,6 +42,7 @@ import { buildAutomationCatalog } from '../engine/templates/automationCatalog'
 import { resolve as resolveDependencies } from '../engine/dependencyResolver'
 import { bodyState } from '../engine/templates/triggerStub'
 import { startTemplateRun, startTemplateRestore, buildRunStateView } from './templateRuns'
+import { TOOLING_SOBJECTS_PATH } from '../../shared/apiVersion'
 
 export interface TemplateIpcDeps {
   store: Store
@@ -304,7 +305,7 @@ export function registerTemplateIpc(deps: TemplateIpcDeps): void {
       let metadataStatus: string | null = null
       let note: string
       try {
-        const full = (await org.conn.request(`/services/data/v66.0/tooling/sobjects/ApexTrigger/${id}`)) as Record<string, unknown>
+        const full = (await org.conn.request(`${TOOLING_SOBJECTS_PATH}ApexTrigger/${id}`)) as Record<string, unknown>
         const md = full.Metadata as Record<string, unknown> | null | undefined
         if (md && typeof md === 'object') {
           metadataKeys = Object.keys(md).sort()

@@ -30,8 +30,9 @@ import { planSettingPatch, settingPatchSoql } from './settingPatch'
 import { writeRows } from './seed/writer'
 import type { OrgWriter, TemplateIo } from './io'
 import type { Tally } from './tally'
+import { TOOLING_QUERY_PATH } from '../../../shared/apiVersion'
 
-const TOOLING_QUERY = '/services/data/v66.0/tooling/query/?q='
+const TOOLING_QUERY = TOOLING_QUERY_PATH
 
 /** The run-bound subset of TemplateStore the automation step needs. */
 export interface ChangeLedger {

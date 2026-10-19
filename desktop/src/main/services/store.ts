@@ -20,7 +20,7 @@ import type {
   Template,
   TemplateKind
 } from '../../shared/types'
-import { PROD_ORG_ID_PREFIX } from '../../shared/types'
+import { isPinnedProdOrgId, PROD_PIN_SETTING_ROW, resolveProdOrgIdPrefix } from '../../shared/prodPin'
 import type { DraftCreateResult, RoleAssignment } from '../../shared/types'
 import { rolesToAssign } from '../../shared/roles'
 import type { WizardConfig, WizardStep } from '../../shared/wizard'
@@ -874,6 +874,34 @@ export const MIGRATIONS: { id: string; sql: string }[] = [
       );
       CREATE INDEX idx_text_id_relinks_run ON text_id_relinks(run_id, object_api_name, field_name);
     `
+  },
+  {
+    // 014 — S64 P5 (5.1, perf #10): persist the timings the run already
+    // computes. Until now the only durable timestamps were deploy_runs.
+    // started_at / finished_at, record_results.attempted_at and the ledger's
+    // disabled_at — restore, finalize, audit and relink durations vanished
+    // with the job, and no memory number survived anywhere (14 instrumented
+    // runs, zero persisted). `run_phases` gets one row per phase transition
+    // (engine phases via setRunPhase; the handler's pre-run phases are
+    // stamped once the run row exists), `deploy_runs.peak_memory` holds the
+    // memorySampler peaks as JSON {label: MB}. The ledger index is the one
+    // true missing index found by EXPLAIN QUERY PLAN (ledgerUnconfirmed was a
+    // full SCAN of automation_ledger_mirror).
+    id: '014-run-phases',
+    sql: `
+      CREATE TABLE run_phases (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id  INTEGER NOT NULL REFERENCES deploy_runs(id) ON DELETE CASCADE,
+        phase   TEXT NOT NULL,
+        at      INTEGER NOT NULL
+      );
+      CREATE INDEX idx_run_phases_run ON run_phases(run_id, at, id);
+
+      ALTER TABLE deploy_runs ADD COLUMN peak_memory TEXT;
+
+      CREATE INDEX idx_ledger_run_restore
+        ON automation_ledger_mirror(run_uuid, restore_confirmed);
+    `
   }
 ]
 
@@ -1026,7 +1054,7 @@ export class Store implements OAuthTokenStore {
           cliStatus: live.connectedStatus,
           id: r.id
         })
-        if (r.role !== 'unassigned' && !live.orgId.startsWith(PROD_ORG_ID_PREFIX)) {
+        if (r.role !== 'unassigned' && !this.isProdPinned(live.orgId)) {
           carryRole.run(r.role, live.alias)
         }
       } else {
@@ -1035,9 +1063,9 @@ export class Store implements OAuthTokenStore {
     }
   }
 
-  private rowToConnection(r: Record<string, unknown>): OrgConnection {
+  private rowToConnection(r: Record<string, unknown>, prodPrefix = this.getProdOrgIdPrefix()): OrgConnection {
     const orgId = String(r.org_id ?? '')
-    const prodPinned = orgId.startsWith(PROD_ORG_ID_PREFIX)
+    const prodPinned = isPinnedProdOrgId(orgId, prodPrefix)
     return {
       id: String(r.id),
       label: String(r.label ?? r.cli_alias ?? r.id),
@@ -1061,7 +1089,8 @@ export class Store implements OAuthTokenStore {
     const rows = this.db
       .prepare('SELECT * FROM connections ORDER BY label, cli_alias')
       .all() as Record<string, unknown>[]
-    return rows.map((r) => this.rowToConnection(r))
+    const prodPrefix = this.getProdOrgIdPrefix()
+    return rows.map((r) => this.rowToConnection(r, prodPrefix))
   }
 
   getConnection(connectionId: string): OrgConnection | undefined {
@@ -1074,8 +1103,8 @@ export class Store implements OAuthTokenStore {
     const row = this.db.prepare('SELECT org_id FROM connections WHERE id = ?').get(connectionId) as
       { org_id: string } | undefined
     if (!row) throw new Error(`Unknown connection: ${connectionId}`)
-    if (role === 'target' && row.org_id.startsWith(PROD_ORG_ID_PREFIX)) {
-      throw new Error('LaunchDarkly production is permanently read-only and can never be a target.')
+    if (role === 'target' && this.isProdPinned(row.org_id)) {
+      throw new Error('This org is pinned as production — read-only, it can never be a target.')
     }
     this.db.prepare('UPDATE connections SET role = ? WHERE id = ?').run(role, connectionId)
   }
@@ -1202,6 +1231,20 @@ export class Store implements OAuthTokenStore {
   }
 
   // ── Settings ────────────────────────────────────────────────
+
+  /**
+   * S64 P6 (D6): the production pin is a runtime setting. A valid stored value
+   * wins; otherwise the compiled default. Read per call (one indexed lookup) so
+   * every layer sees a change the moment it is saved.
+   */
+  getProdOrgIdPrefix(): string {
+    return resolveProdOrgIdPrefix(this.getSetting(PROD_PIN_SETTING_ROW))
+  }
+
+  /** True when `orgId` is the pinned production org (read-only, never a target). */
+  isProdPinned(orgId: string): boolean {
+    return isPinnedProdOrgId(orgId, this.getProdOrgIdPrefix())
+  }
 
   getSetting(key: string): string | null {
     const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as

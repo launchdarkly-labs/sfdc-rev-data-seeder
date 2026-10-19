@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { EmptyState } from './EmptyState'
 
 export interface Column<T> {
   key: string
@@ -65,22 +66,30 @@ export function DataTable<T>({
   }
 
   return (
-    <div className="datatable-wrap">
-      <table className="datatable">
+    <div className="table-wrap datatable-wrap">
+      <table className="table datatable">
         <thead>
           <tr>
             {columns.map((c) => (
               <th
                 key={c.key}
-                className={c.sortValue ? 'sortable' : ''}
+                className={`${c.sortValue ? 'sortable' : ''} ${c.align === 'right' ? 'align-right' : ''}`.trim()}
                 aria-sort={
                   sortKey === c.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined
                 }
-                onClick={() => toggleSort(c)}
               >
-                {c.header}
-                {sortKey === c.key && (
-                  <span className="sort-caret">{sortDir === 'asc' ? ' ▲' : ' ▼'}</span>
+                {c.sortValue ? (
+                  // ux A-5: sort is a real button, so it works from the keyboard.
+                  <button type="button" className="th-sort" onClick={() => toggleSort(c)}>
+                    {c.header}
+                    {sortKey === c.key && (
+                      <span className="sort-caret" aria-hidden="true">
+                        {sortDir === 'asc' ? ' ▲' : ' ▼'}
+                      </span>
+                    )}
+                  </button>
+                ) : (
+                  c.header
                 )}
               </th>
             ))}
@@ -98,8 +107,8 @@ export function DataTable<T>({
           ))}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={columns.length} className="muted">
-                {empty}
+              <td colSpan={columns.length}>
+                <EmptyState title={empty} />
               </td>
             </tr>
           )}

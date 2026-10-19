@@ -7,15 +7,18 @@ import { useIpcQuery } from '../../ipc/hooks'
 import { Badge } from '../../ui/Badge'
 import { useConfirm } from '../../ui/ConfirmDialog'
 import { useToast } from '../../ui/Toast'
-import { fmtWhen, runStateTone } from './templateUi'
+import { Modal } from '../../ui/Modal'
+import { statusLabel, statusTone } from '../../../../shared/labels'
+import { fmtWhen, relativeTime } from './templateUi'
 
 type Filter = 'all' | TemplateKind
 
 /**
  * /templates — every template of every kind (S59 plan §2.1). The two runnable
- * kinds (Data seed, Post-refresh) get Edit + Run; the wizard's objects /
- * mappings / fields templates are listed too (D6) with Rename / Export-less
- * Delete only — their editing stays on the wizard steps.
+ * kinds (Data seed, Post-refresh) get Run as the primary action with Edit /
+ * Duplicate / Export / Rename / Delete in the row's "…" menu; the wizard's
+ * objects / mappings / fields presets are listed too (D6) with Rename as the
+ * primary and Delete in the menu — their editing stays on the wizard steps.
  */
 export function TemplatesPage(): React.JSX.Element {
   const navigate = useNavigate()
@@ -24,6 +27,8 @@ export function TemplatesPage(): React.JSX.Element {
   const { data, loading, error, refetch } = useIpcQuery(() => window.rds.templateListAll(), [])
   const [filter, setFilter] = useState<Filter>('all')
   const [busy, setBusy] = useState(false)
+  // S64 (P2): Rename used window.prompt, which Electron does not implement — a silent no-op.
+  const [renaming, setRenaming] = useState<{ t: TemplateSummary; name: string } | null>(null)
 
   const rows = useMemo(() => (data ?? []).filter((t) => filter === 'all' || t.kind === filter), [data, filter])
 
@@ -59,9 +64,17 @@ export function TemplatesPage(): React.JSX.Element {
       refetch()
     })
 
-  const rename = (t: TemplateSummary): Promise<void> =>
+  const rename = (t: TemplateSummary): Promise<void> => {
+    setRenaming({ t, name: t.name })
+    return Promise.resolve()
+  }
+
+  const commitRename = (): Promise<void> =>
     run(async () => {
-      const name = window.prompt(`Rename "${t.name}" to:`, t.name)?.trim()
+      if (!renaming) return
+      const name = renaming.name.trim()
+      const { t } = renaming
+      setRenaming(null)
       if (!name || name === t.name) return
       await callIpc(() => window.rds.templateRename({ id: t.id, name }))
       toast(`Renamed to "${name}"`, 'success')
@@ -98,13 +111,13 @@ export function TemplatesPage(): React.JSX.Element {
       <h1>Templates</h1>
       <p className="sub">
         Data seed templates copy configuration from a source org into a sandbox; Post-refresh templates set flows and
-        triggers to a wanted state, patch settings, then run seeds. Wizard templates (objects, mappings, fields) are
-        listed here too.
+        triggers to a wanted state, patch settings, then run seeds. Both can also run as stages of a deployment. The
+        wizard&rsquo;s saved presets (objects, mappings, fields) are listed here too.
       </p>
 
       <div className="toolbar">
         <Link className="btn primary" to="/templates/new">
-          New Template
+          New template
         </Link>
         <button className="btn" onClick={() => void importFile()} disabled={busy}>
           Import…
@@ -119,9 +132,9 @@ export function TemplatesPage(): React.JSX.Element {
           <option value="all">All types</option>
           <option value="seed">Data seed</option>
           <option value="postRefresh">Post-refresh</option>
-          <option value="objects">Objects (wizard)</option>
-          <option value="mappings">Mappings (wizard)</option>
-          <option value="fields">Fields (wizard)</option>
+          <option value="objects">Objects preset</option>
+          <option value="mappings">Mappings preset</option>
+          <option value="fields">Fields preset</option>
         </select>
       </div>
 
@@ -173,44 +186,95 @@ export function TemplatesPage(): React.JSX.Element {
                   <td>
                     {t.lastRun ? (
                       <Link to={`/templates/${t.id}/runs/${t.lastRun.runId}`} className="last-run">
-                        <Badge tone={runStateTone(t.lastRun.state)}>{t.lastRun.state}</Badge>{' '}
-                        <span className="muted">
-                          {t.lastRun.mode} · {t.lastRun.targetLabel} · {fmtWhen(t.lastRun.startedAt)}
+                        <Badge tone={statusTone('templateRun', t.lastRun.state)}>
+                          {statusLabel('templateRun', t.lastRun.state)}
+                        </Badge>{' '}
+                        <span className="muted last-run-when" title={fmtWhen(t.lastRun.startedAt)}>
+                          {t.lastRun.mode} · {t.lastRun.targetLabel} · {relativeTime(t.lastRun.startedAt)}
                         </span>
                       </Link>
                     ) : (
                       <span className="muted">—</span>
                     )}
                   </td>
+                  {/* S64 P3 (ux C-8): one primary action + a "…" menu, not six stacked buttons.
+                      Wizard presets have no editor of their own, so Rename is their primary. */}
                   <td className="template-actions">
-                    {runnable && (
-                      <>
-                        <button className="btn btn-small" onClick={() => navigate(`/templates/${t.id}/edit`)} disabled={busy}>
-                          Edit
-                        </button>
-                        <button className="btn btn-small primary" onClick={() => navigate(`/templates/${t.id}/run`)} disabled={busy}>
-                          Run
-                        </button>
-                        <button className="btn btn-small" onClick={() => void duplicate(t)} disabled={busy}>
-                          Duplicate
-                        </button>
-                        <button className="btn btn-small" onClick={() => void exportOne(t)} disabled={busy}>
-                          Export…
-                        </button>
-                      </>
+                    {runnable ? (
+                      <button className="btn btn-small primary" onClick={() => navigate(`/templates/${t.id}/run`)} disabled={busy}>
+                        Run
+                      </button>
+                    ) : (
+                      <button className="btn btn-small" onClick={() => void rename(t)} disabled={busy}>
+                        Rename
+                      </button>
                     )}
-                    <button className="btn btn-small" onClick={() => void rename(t)} disabled={busy}>
-                      Rename
-                    </button>
-                    <button className="btn btn-small danger" onClick={() => void remove(t)} disabled={busy}>
-                      Delete
-                    </button>
+                    <details className="card-menu">
+                      <summary className="btn btn-small" aria-label={`More actions for ${t.name}`} title="More actions">
+                        …
+                      </summary>
+                      <div className="card-menu-list">
+                        {runnable && (
+                          <>
+                            <button type="button" onClick={() => navigate(`/templates/${t.id}/edit`)} disabled={busy}>
+                              Edit
+                            </button>
+                            <button type="button" onClick={() => void duplicate(t)} disabled={busy}>
+                              Duplicate
+                            </button>
+                            <button type="button" onClick={() => void exportOne(t)} disabled={busy}>
+                              Export…
+                            </button>
+                            <button type="button" onClick={() => void rename(t)} disabled={busy}>
+                              Rename
+                            </button>
+                          </>
+                        )}
+                        <button type="button" className="menu-danger" onClick={() => void remove(t)} disabled={busy}>
+                          Delete
+                        </button>
+                      </div>
+                    </details>
                   </td>
                 </tr>
               )
             })}
           </tbody>
         </table>
+      )}
+      {renaming && (
+        <Modal
+          title={`Rename "${renaming.t.name}"`}
+          onClose={() => setRenaming(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setRenaming(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={renaming.name.trim() === '' || renaming.name.trim() === renaming.t.name}
+                onClick={() => void commitRename()}
+              >
+                Rename
+              </button>
+            </>
+          }
+        >
+          <label className="field">
+            <span>New name</span>
+            <input
+              className="text-input"
+              aria-label="New template name"
+              autoFocus
+              value={renaming.name}
+              onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void commitRename()
+              }}
+            />
+          </label>
+        </Modal>
       )}
     </>
   )

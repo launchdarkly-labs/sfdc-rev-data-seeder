@@ -11,7 +11,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { render, screen, cleanup, within, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { TemplateRunPage, applyUnlockedBy } from '../../src/renderer/src/pages/templates/TemplateRunPage'
+import { TemplateRunPage, applyUnlockedBy, splitLead } from '../../src/renderer/src/pages/templates/TemplateRunPage'
 import { TemplateRunReportPage } from '../../src/renderer/src/pages/templates/TemplateRunReportPage'
 import { useJobsStore } from '../../src/renderer/src/store/jobs'
 import { ToastProvider } from '../../src/renderer/src/ui/Toast'
@@ -229,7 +229,13 @@ describe('TemplateRunPage', () => {
     const user = userEvent.setup()
     renderAt('/templates/1/run')
     expect(await screen.findByRole('heading', { name: 'Run: Acme CPQ configuration' })).toBeInTheDocument()
-    expect(screen.getByTestId('dry-run-caveat')).toHaveTextContent(DRY_RUN_CAVEAT)
+    // T-16: the first sentence leads; the rest sits behind "Learn more" (the confirm shows the full text).
+    const [lead, more] = splitLead(DRY_RUN_CAVEAT)
+    expect(more).not.toBe('')
+    const caveat = screen.getByTestId('dry-run-caveat')
+    expect(caveat).toHaveTextContent(lead)
+    expect(caveat).toHaveTextContent(more)
+    expect(within(caveat).getByText('Learn more').tagName).toBe('SUMMARY')
     expect(screen.getByLabelText('Target org')).toHaveValue('sb3')
     expect(screen.getByLabelText('Source org')).toHaveValue('srcbox')
     expect(screen.getByRole('alert')).toHaveTextContent(/disable Salesforce CPQ triggers on the target org before applying/)
@@ -362,15 +368,53 @@ describe('TemplateRunReportPage', () => {
     await waitFor(() => expect(restored).toEqual([9]))
   })
 
-  it('a running job shows the phase and a Cancel that reaches the job', async () => {
+  it('a running job shows the phase and a Cancel that reaches the job (with visible helper text)', async () => {
     const user = userEvent.setup()
     runState = { ...runState, run: run({ id: 9, mode: 'apply', state: 'running', jobId: 'job-1' }), report: null, unrestoredTemporary: 0 }
     renderAt('/templates/1/runs/9')
     await screen.findByRole('heading', { name: 'Apply: Acme CPQ configuration' })
     act(() => useJobsStore.getState().hydrate([job({ id: 'job-1', kind: 'template-apply', status: 'running', phase: 'Seed: SBQQ__PriceRule__c', progress: { value: 3, max: 10 } })]))
     expect(await screen.findByText(/Seed: SBQQ__PriceRule__c/)).toBeInTheDocument()
+    expect(screen.getByText(/Stops at the next batch; records already written stay/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect((window as unknown as { rds: { jobCancel: ReturnType<typeof vi.fn> } }).rds.jobCancel).toHaveBeenCalledWith('job-1')
+    expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled()
+  })
+
+  it('F-7: the live log names its cap and can be narrowed to errors and warnings', async () => {
+    const user = userEvent.setup()
+    let handler: ((e: { jobId: string; kind: string; ts: number; data: Record<string, unknown> }) => void) | null = null
+    const rds = (window as unknown as { rds: Record<string, unknown> }).rds
+    rds.onJobEvent = (cb: typeof handler) => {
+      handler = cb
+      return () => undefined
+    }
+    runState = { ...runState, run: run({ id: 9, mode: 'apply', state: 'running', jobId: 'job-1' }), report: null, unrestoredTemporary: 0 }
+    renderAt('/templates/1/runs/9')
+    await screen.findByRole('heading', { name: 'Apply: Acme CPQ configuration' })
+    await waitFor(() => expect(handler).not.toBeNull())
+    act(() => {
+      handler!({ jobId: 'job-1', kind: 'log', ts: 1, data: { level: 'info', message: 'seeding Account' } })
+      handler!({ jobId: 'job-1', kind: 'log', ts: 2, data: { level: 'warn', message: 'slow batch on Contact' } })
+      handler!({ jobId: 'job-1', kind: 'log', ts: 3, data: { level: 'error', message: 'UNKNOWN_EXCEPTION on Opportunity' } })
+      handler!({ jobId: 'other', kind: 'log', ts: 4, data: { level: 'error', message: 'not this run' } })
+    })
+    const log = await screen.findByTestId('run-log')
+    expect(log).toHaveTextContent('seeding Account')
+    expect(log).not.toHaveTextContent('not this run')
+    expect(screen.getByTestId('log-cap')).toHaveTextContent(/showing the last 400/)
+    await user.click(screen.getByLabelText('Errors and warnings only'))
+    expect(log).not.toHaveTextContent('seeding Account')
+    expect(log).toHaveTextContent('slow batch on Contact')
+    expect(log).toHaveTextContent('UNKNOWN_EXCEPTION on Opportunity')
+  })
+
+  it('T-11: report headers carry units or titles', async () => {
+    renderAt('/templates/1/runs/9')
+    await screen.findByRole('heading', { name: 'Apply: Acme CPQ configuration' })
+    expect(screen.getByRole('columnheader', { name: 'Fields written' })).toHaveAttribute('title')
+    expect(screen.getByRole('columnheader', { name: 'Nulled lookups' })).toHaveAttribute('title')
+    expect(screen.getByRole('columnheader', { name: 'Load group' })).toBeInTheDocument()
   })
 
   it('U-1: a clean dry run of this revision, run THIS session, offers "Apply with these settings" and starts the apply with the same steps and options', async () => {

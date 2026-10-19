@@ -50,6 +50,8 @@ export interface RunTemplateOptions {
   sourceStoredRole: string | null
   /** Other work on the same target org found by the caller (deploy jobs, other template runs, unrestored rows). */
   lockConflict: string | null
+  /** The runtime production pin (S64 P6, D6). Defaults to the compiled constant. */
+  prodOrgIdPrefix?: string
 }
 
 export function emptyReport(mode: TemplateRunMode, startedAt: number): TemplateReport {
@@ -89,7 +91,7 @@ export async function runTemplate(io: TemplateIo, resolved: ResolvedRun, ledger:
   const blockers = report.preflight.blockers
   blockers.push(...resolved.blockers)
   if (opts.targetStoredRole !== 'target') blockers.push(`The target connection's stored role is '${opts.targetStoredRole}' — set it to Target on the Connections page`)
-  if (isProdOrg(io.target.orgId)) blockers.push('The target is production — permanently read-only')
+  if (isProdOrg(io.target.orgId, opts.prodOrgIdPrefix)) blockers.push('The target is the pinned production org — read-only')
   try {
     const org = await io.target.organization()
     if (!org.isSandbox) blockers.push(`${io.target.label} (${org.name}) is not a sandbox — templates only write to sandboxes`)

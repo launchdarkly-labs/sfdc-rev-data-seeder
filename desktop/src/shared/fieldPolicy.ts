@@ -116,14 +116,20 @@ export function isOutOfScopeRefLocked(
  * `field` exclusion is the user's own choice. `populated` is the set of fields
  * found non-null in a source sample (null when populated-only is off / not yet
  * loaded). `ref` carries the field's reference target for the out-of-scope-ref
- * lock (omit for non-reference callers).
+ * lock (omit for non-reference callers). `excludedSet` (S64 P5, 5.6c) is an
+ * optional precomputed `Set` of `config.excludedFields[objectName]` — a caller
+ * evaluating every field of an object (the Fields step) builds it once per
+ * object so the explicit-exclusion lookup is O(1) instead of an O(n) array scan
+ * (O(n²) per object after "Exclude all"). Without it the array path is used; the
+ * two must agree (test/fieldPolicy.test.ts).
  */
 export function fieldExclusion(
   fieldApiName: string,
   objectName: string,
   config: FieldConfigSlice,
   populated: ReadonlySet<string> | null,
-  ref?: FieldRefContext
+  ref?: FieldRefContext,
+  excludedSet?: ReadonlySet<string>
 ): FieldExclusion {
   // A ref whose EFFECTIVE mapping strategy is 'skip' is stripped by the
   // transform — the include checkbox must not promise it. Effective strategy
@@ -156,7 +162,10 @@ export function fieldExclusion(
   if (config.populatedOnly && populated !== null && !populated.has(fieldApiName)) {
     return { excluded: true, reason: 'unpopulated' }
   }
-  if ((config.excludedFields[objectName] ?? []).includes(fieldApiName)) {
+  const explicitlyExcluded = excludedSet
+    ? excludedSet.has(fieldApiName)
+    : (config.excludedFields[objectName] ?? []).includes(fieldApiName)
+  if (explicitlyExcluded) {
     return { excluded: true, reason: 'field' }
   }
   return { excluded: false }

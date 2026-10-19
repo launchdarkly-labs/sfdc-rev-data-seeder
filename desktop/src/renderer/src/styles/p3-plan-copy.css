@@ -1,0 +1,211 @@
+/* S64 P3 — p3-plan-copy. Uses the tokens declared in ../app.css only; no new colours or sizes. */
+
+/* ── Pre-flight checklist (Plan step, ux IA-7) ───────────────────────────── */
+.preflight {
+  margin-top: var(--space-6);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+}
+.preflight > h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.preflight-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.preflight-row {
+  border-top: 1px solid var(--border);
+}
+.preflight-row:first-child {
+  border-top: 0;
+}
+.preflight-summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  cursor: pointer;
+  list-style: none;
+}
+.preflight-summary::-webkit-details-marker {
+  display: none;
+}
+.preflight-mark {
+  flex: 0 0 1.4em;
+  text-align: center;
+  font-weight: 700;
+}
+.preflight-row[data-state='ok'] .preflight-mark {
+  color: var(--green);
+}
+.preflight-row[data-state='todo'] .preflight-mark {
+  color: var(--accent);
+}
+.preflight-row[data-state='warn'] .preflight-mark {
+  color: var(--amber);
+}
+.preflight-row[data-state='pending'] .preflight-mark {
+  color: var(--muted);
+}
+.preflight-label {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.preflight-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+.preflight-row[data-state='warn'] .preflight-line,
+.preflight-row[data-state='todo'] .preflight-line {
+  color: var(--text);
+}
+.preflight-body {
+  padding: 0 0 var(--space-4) calc(1.4em + var(--space-3));
+  font-size: var(--fs-md);
+}
+.preflight-body .banner,
+.preflight-body .automation-panel {
+  margin-top: var(--space-2);
+}
+.preflight-body > .automation-panel {
+  margin-top: 0;
+}
+.preflight .deploy-gate-note {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+/* The former will-fail banner, now a Pre-flight row body (keeps its red accent). */
+.will-fail {
+  border-left: 3px solid var(--red);
+  padding: var(--space-2) var(--space-5);
+}
+.will-fail ul {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-6);
+}
+
+/* Automation panel: heading + Re-scan as a header row (A-13); table under a disclosure. */
+.automation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.automation-head > h3 {
+  margin: 0;
+}
+.automation-details {
+  margin-top: var(--space-3);
+}
+.automation-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin-bottom: var(--space-2);
+}
+
+/* ── "Learn more" disclosure for long cautions (ux T-16) ────────────────── */
+.learn-more {
+  display: inline-block;
+  margin-left: var(--space-2);
+  font-size: var(--fs-sm);
+}
+.learn-more > summary {
+  display: inline;
+  cursor: pointer;
+  color: var(--link);
+  text-decoration: underline;
+}
+.learn-more > p,
+.learn-more > pre {
+  margin: var(--space-2) 0 0;
+  color: var(--text);
+}
+
+/* ── Legend lines under tables (ux T-5 / T-11) ──────────────────────────── */
+.legend {
+  font-size: var(--fs-sm);
+  margin: var(--space-2) 0 var(--space-5);
+}
+
+/* ── Deployment page: pre-run checklist, live row, mini bar, update stamp (ux F-3 / F-6) ── */
+.prerun-steps {
+  margin: var(--space-3) 0 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.prerun-steps > li {
+  padding: var(--space-1) 0;
+}
+.prerun-mark {
+  display: inline-block;
+  width: 1.4em;
+  text-align: center;
+  color: var(--accent);
+}
+.run-objects tr.current td {
+  background: var(--accent-tint-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.mini-progress {
+  min-width: 140px;
+}
+.mini-bar {
+  display: inline-block;
+  vertical-align: middle;
+  width: 80px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--panel-2);
+  overflow: hidden;
+  margin-right: var(--space-2);
+}
+.mini-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.mini-bar-text {
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.last-updated {
+  font-size: var(--fs-sm);
+}
+
+/* ── Template run report: live log header (ux F-7) ──────────────────────── */
+.log-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+.log-head > h2 {
+  margin-right: auto;
+}
+
+/* ── Seed builder: Advanced settings + per-field help (ux T-10) ─────────── */
+.seed-advanced {
+  margin-top: var(--space-6);
+}
+.seed-advanced > summary {
+  font-weight: 600;
+  color: var(--text);
+}
+.field-help {
+  display: block;
+  font-size: var(--fs-sm);
+  margin-top: var(--space-1);
+}

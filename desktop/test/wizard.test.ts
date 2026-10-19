@@ -79,12 +79,12 @@ describe('S46 D1 status vocabulary', () => {
   it('orders the steps exactly orgs → objects → scope → … → plan', () => {
     expect([...WIZARD_STEPS]).toEqual([
       'orgs',
-      'templates',
       'objects',
       'scope',
       'readiness',
       'mappings',
       'fields',
+      'templates',
       'summary',
       'plan'
     ])
@@ -96,8 +96,8 @@ describe('S46 D1 status vocabulary', () => {
   })
 
   it('keeps objects strictly between orgs and scope', () => {
-    expect(stepIndex('objects')).toBe(stepIndex('templates') + 1)
-    expect(stepIndex('templates')).toBe(stepIndex('orgs') + 1)
+    expect(stepIndex('templates')).toBe(stepIndex('fields') + 1)
+    expect(stepIndex('summary')).toBe(stepIndex('templates') + 1)
     expect(stepIndex('scope')).toBe(stepIndex('objects') + 1)
   })
 

@@ -9,6 +9,7 @@
  * own keychain storage stays the source of truth.
  */
 import { execFile } from 'node:child_process'
+import { RdsHandlerError } from '../errors'
 import { promisify } from 'node:util'
 import { homedir } from 'node:os'
 
@@ -53,12 +54,25 @@ export interface CliToken {
   apiVersion: string | null
 }
 
+/** Operator-facing guidance when `sf` cannot be found (S64 P2 — was a raw `spawn sf ENOENT`). */
+export const CLI_MISSING_MESSAGE =
+  'The Salesforce CLI (sf) was not found on this Mac. Install it from developer.salesforce.com/tools/salesforcecli, ' +
+  'sign in to each org with `sf org login web -a <alias>`, then click "Refresh from sf CLI".'
+
 async function sfJson<T>(args: string[]): Promise<T> {
-  const { stdout } = await execFileAsync('sf', [...args, '--json'], {
-    timeout: SF_TIMEOUT_MS,
-    maxBuffer: 32 * 1024 * 1024,
-    env: EXEC_ENV
-  })
+  let stdout: string
+  try {
+    ;({ stdout } = await execFileAsync('sf', [...args, '--json'], {
+      timeout: SF_TIMEOUT_MS,
+      maxBuffer: 32 * 1024 * 1024,
+      env: EXEC_ENV
+    }))
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      throw new RdsHandlerError('CLI_MISSING', CLI_MISSING_MESSAGE, `PATH searched: ${EXEC_ENV.PATH}`)
+    }
+    throw err
+  }
   const parsed = JSON.parse(stdout)
   if (parsed.status !== 0) {
     throw new Error(

@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import type { Template, TemplateKind } from '../../../../shared/types'
-import { reconcileObjectsTemplate } from '../../../../shared/wizard'
+import { nextLabel, reconcileObjectsTemplate } from '../../../../shared/wizard'
 import { callIpc, toRdsError } from '../../ipc/client'
 import { useIpcQuery } from '../../ipc/hooks'
+import { Loading } from '../../ui/Loading'
 import { ObjectPicker } from '../../ui/ObjectPicker'
 import { OutcomeNote, errNote, okNote, type Note } from '../../ui/OutcomeNote'
 import { SelectionPills } from '../../ui/SelectionPills'
@@ -183,7 +184,7 @@ export function StepObjects(): React.JSX.Element {
         next.
       </p>
 
-      {loading && <p className="muted">Loading objects…</p>}
+      {loading && <Loading label="Loading objects…" />}
       {error && (
         <div className="banner">
           {error.message}{' '}
@@ -197,14 +198,14 @@ export function StepObjects(): React.JSX.Element {
         <>
           <div className="toolbar">
             <select
-              className="map-strategy"
-              aria-label="Saved objects template"
+              className="select"
+              aria-label="Saved objects preset"
               value={selectedTemplateId === '' ? '' : String(selectedTemplateId)}
               onChange={(e) =>
                 setSelectedTemplateId(e.target.value === '' ? '' : Number(e.target.value))
               }
             >
-              <option value="">— saved templates —</option>
+              <option value="">— saved presets —</option>
               {templates.data?.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -233,9 +234,9 @@ export function StepObjects(): React.JSX.Element {
               Delete
             </button>
             <input
-              className="map-matchfield"
-              aria-label="Objects template name"
-              placeholder="template name"
+              className="input-sm"
+              aria-label="Objects preset name"
+              placeholder="preset name"
               value={templateName}
               onChange={(e) => setTemplateName(e.target.value)}
             />
@@ -270,7 +271,7 @@ export function StepObjects(): React.JSX.Element {
 
           {/* UI-3: the toolbar is inside the busy guard like every other step. */}
           <div className="toolbar">
-            <button className="btn" disabled={templateBusy} onClick={() => goToStep('templates')}>
+            <button className="btn" disabled={templateBusy} onClick={() => goToStep('orgs')}>
               Back
             </button>
             <button
@@ -278,7 +279,7 @@ export function StepObjects(): React.JSX.Element {
               disabled={selected.length === 0 || templateBusy}
               onClick={() => goToStep('scope')}
             >
-              Next: scope ({selected.length} selected)
+              {nextLabel('scope', `(${selected.length} selected)`)}
             </button>
             {templateBusy && <span className="muted">Finishing the current action…</span>}
           </div>

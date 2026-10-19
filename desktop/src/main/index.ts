@@ -12,7 +12,9 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 840,
-    title: 'Rev Data Seeder',
+    minWidth: 1024,
+    minHeight: 680,
+    title: `Rev Data Seeder ${app.getVersion()}`,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

@@ -94,7 +94,11 @@ const api: RdsApi = {
     ipcRenderer.invoke(IPC.templateTriggerProbe, input),
   analyze: (deploymentId: number) => ipcRenderer.invoke(IPC.analyze, deploymentId),
   deployStart: (deploymentId: number) => ipcRenderer.invoke(IPC.deployStart, deploymentId),
-  deployRunState: (deploymentId: number) => ipcRenderer.invoke(IPC.deployRunState, deploymentId)
+  deployRunState: (deploymentId: number) => ipcRenderer.invoke(IPC.deployRunState, deploymentId),
+  deployExportFailures: (deploymentId: number) =>
+    ipcRenderer.invoke(IPC.deployExportFailures, deploymentId),
+  settingsGet: (key: string) => ipcRenderer.invoke(IPC.settingsGet, key),
+  settingsSet: (key: string, value: string) => ipcRenderer.invoke(IPC.settingsSet, key, value)
 }
 
 contextBridge.exposeInMainWorld('rds', api)

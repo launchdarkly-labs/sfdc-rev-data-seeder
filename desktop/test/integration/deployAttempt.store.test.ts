@@ -197,7 +197,7 @@ describe('terminal texts carry the last Error-level engine line (F2)', () => {
     const tripwire =
       'CPQ triggers are ACTIVE on the target — SBQQ.SubscriptionAfter rejected the batch. Check "Triggers Disabled" and re-run.'
     expect(runFailureMessage(3, tripwire)).toBe(
-      `Deployment failed — 3 record(s) failed; per-record failures are recorded in the app database (failed_records / record_results) until the run-log pane ships (5C.1).\n${tripwire}`
+      `Deployment failed — 3 record(s) failed; the Deployment page shows failures per object and "Export failure list" saves every failed row with its reason as JSON.\n${tripwire}`
     )
     expect(runFailureMessage(0, null)).not.toContain('\n')
     expect(runFailureMessage(0, null)).not.toContain('see the run log')

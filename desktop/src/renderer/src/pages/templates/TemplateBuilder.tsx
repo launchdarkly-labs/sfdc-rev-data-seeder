@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { OrgConnection } from '../../../../shared/types'
 import {
@@ -81,6 +81,11 @@ function BuilderForm({ initial, orgs }: { initial: TemplateDetail | null; orgs: 
   const [connectionPick, setConnectionPick] = useState<string | null>(null)
   const [errors, setErrors] = useState<ValidationError[]>([])
   const [saving, setSaving] = useState(false)
+  // C-15: the problems are reported ONCE, in the banner — no toast on top. Bring the banner into view.
+  const errorsRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (errors.length > 0) errorsRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [errors])
 
   // Read-from: the user's pick wins; else the built-from org when it is still around; else the first source org.
   const live = useMemo(() => livePickable(orgs), [orgs])
@@ -97,10 +102,7 @@ function BuilderForm({ initial, orgs }: { initial: TemplateDetail | null; orgs: 
     const v = validateTemplate(kind, withHint)
     const all = [...(name.trim() ? [] : [{ path: 'name', message: 'is required' }]), ...v.errors]
     setErrors(all)
-    if (all.length > 0) {
-      toast(`Fix ${all.length} problem${all.length === 1 ? '' : 's'} before saving.`, 'error')
-      return
-    }
+    if (all.length > 0) return
     setSaving(true)
     try {
       const saved = await callIpc(() =>
@@ -144,7 +146,7 @@ function BuilderForm({ initial, orgs }: { initial: TemplateDetail | null; orgs: 
         </label>
         <label className="field builder-desc">
           <span>Description</span>
-          <input className="text-input" aria-label="Template description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="optional" />
+          <input className="text-input" aria-label="Template description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" />
         </label>
       </div>
 
@@ -164,9 +166,9 @@ function BuilderForm({ initial, orgs }: { initial: TemplateDetail | null; orgs: 
       </p>
 
       {errors.length > 0 && (
-        <div className="banner" role="alert">
+        <div className="banner" role="alert" ref={errorsRef} tabIndex={-1}>
           <strong>
-            {errors.length} problem{errors.length === 1 ? '' : 's'}:
+            {errors.length} problem{errors.length === 1 ? '' : 's'} before this can be saved:
           </strong>
           <ul>
             {errors.slice(0, 20).map((e) => (

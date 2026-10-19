@@ -13,6 +13,8 @@ const ToastContext = createContext<(message: string, kind?: ToastKind) => void>(
 })
 
 const DEFAULT_TTL_MS = 6000
+/** ux F-4: never more than this many on screen; the oldest is dropped first. */
+export const MAX_VISIBLE_TOASTS = 3
 
 export function ToastProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -21,12 +23,13 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
   const dismiss = useCallback((id: number): void => {
     setToasts((ts) => ts.filter((t) => t.id !== id))
   }, [])
+  const dismissAll = useCallback((): void => setToasts([]), [])
 
   const push = useCallback(
     (message: string, kind: ToastKind = 'info'): void => {
       const id = nextId.current++
-      setToasts((ts) => [...ts, { id, kind, message }])
-      // Errors linger (no auto-dismiss); info/success fade.
+      setToasts((ts) => [...ts, { id, kind, message }].slice(-MAX_VISIBLE_TOASTS))
+      // Errors linger until closed (ux F-4: closable, not permanent); info/success fade.
       if (kind !== 'error') setTimeout(() => dismiss(id), DEFAULT_TTL_MS)
     },
     [dismiss]
@@ -36,14 +39,27 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
     <ToastContext.Provider value={push}>
       {children}
       <div className="toast-host">
+        {toasts.length >= 2 && (
+          <button type="button" className="btn btn-small toast-dismiss-all" onClick={dismissAll}>
+            Dismiss all
+          </button>
+        )}
         {toasts.map((t) => (
           <div
             key={t.id}
             className={`toast toast-${t.kind}`}
-            role="status"
-            onClick={() => dismiss(t.id)}
+            // ux A-7: an error interrupts (alert); the rest wait their turn (status).
+            role={t.kind === 'error' ? 'alert' : 'status'}
           >
-            {t.message}
+            <span className="toast-message">{t.message}</span>
+            <button
+              type="button"
+              className="toast-close"
+              aria-label="Dismiss"
+              onClick={() => dismiss(t.id)}
+            >
+              ×
+            </button>
           </div>
         ))}
       </div>

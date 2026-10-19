@@ -123,6 +123,47 @@ export async function describeDeployFields(
   }))
 }
 
+/**
+ * S64 P5 (5.2, perf #2): one describe per (org, object) for the LIFETIME OF A
+ * RUN. The freeze, every object context (first pass, each 150-id retry chunk),
+ * the second pass and the relink pass all re-described — ~60–70 describes ×
+ * 230–280 KB ≈ 15 MB and 30–60 s per 11-object run — while the schema cannot
+ * change inside one run. A REJECTED promise is evicted, never pinned (the E4E.2
+ * targetUserId lesson: a cached rejection structurally defeated the bounded
+ * retries). `stats()` is the measurement the plan asks for.
+ */
+export interface DescribeMemo {
+  get(org: GuardedOrg, objectApiName: string): Promise<DescribeField[]>
+  /** fetched = describes that went to an org; served = answered from the memo. */
+  stats(): { fetched: number; served: number }
+}
+
+export function makeDescribeMemo(
+  fetch: (org: GuardedOrg, objectApiName: string) => Promise<DescribeField[]> = describeDeployFields
+): DescribeMemo {
+  const memo = new Map<string, Promise<DescribeField[]>>()
+  let fetched = 0
+  let served = 0
+  return {
+    get(org, objectApiName) {
+      const key = `${org.role}|${org.orgId}|${objectApiName.toLowerCase()}`
+      const hit = memo.get(key)
+      if (hit) {
+        served++
+        return hit
+      }
+      fetched++
+      const p = fetch(org, objectApiName)
+      memo.set(key, p)
+      p.catch(() => {
+        if (memo.get(key) === p) memo.delete(key)
+      })
+      return p
+    },
+    stats: () => ({ fetched, served })
+  }
+}
+
 export interface DeployIoOptions {
   source: GuardedOrg
   target: GuardedOrg
@@ -131,6 +172,8 @@ export interface DeployIoOptions {
   emit: (event: DeployEvent) => void
   /** S61 (U-5): present ⇔ KEYLESS mode — see `makeDeployIdMap`. */
   idMap?: DeployIdMapIo
+  /** S64 P5 (5.2): the run's describe memo; the handler shares one with the freeze. */
+  describes?: DescribeMemo
   /** Injected for tests; real defaults otherwise. */
   now?: () => Date
   sleep?: (ms: number) => Promise<void>
@@ -361,16 +404,11 @@ export async function partitionUnchanged(
 export function makeDeployIo(opts: DeployIoOptions): DeployIo {
   const { source, target, store, emit, idMap } = opts
   const transport = makeCollectionsTransport(target)
-  // Keyless needs relationshipName → field for the nested references it flattens; one describe per object.
-  const targetDescribes = new Map<string, Promise<DescribeField[]>>()
-  const describeTargetOnce = (objectName: string): Promise<DescribeField[]> => {
-    let p = targetDescribes.get(objectName)
-    if (!p) {
-      p = describeDeployFields(target, objectName)
-      targetDescribes.set(objectName, p)
-    }
-    return p
-  }
+  // S64 P5 (5.2): every describe in the run goes through one memo — the
+  // keyless path's own per-object target memo is now the same map.
+  const describes = opts.describes ?? makeDescribeMemo()
+  const describeTargetOnce = (objectName: string): Promise<DescribeField[]> =>
+    describes.get(target, objectName)
   // The connected target user. The Apex oracle (DataSeederController.
   // getOrgUserId, L869-886) is fail-SILENT — ANY failure returns null and the
   // deploy proceeds (setToMe drops via blank-drop; inactive-owner substitution
@@ -381,8 +419,8 @@ export function makeDeployIo(opts: DeployIoOptions): DeployIo {
   // MAX_OBJECT_RETRIES and failed every User-ref object in the run).
   let targetUserId: Promise<string | null> | null = null
   return {
-    describeSource: (objectName) => describeDeployFields(source, objectName),
-    describeTarget: (objectName) => describeDeployFields(target, objectName),
+    describeSource: (objectName) => describes.get(source, objectName),
+    describeTarget: (objectName) => describes.get(target, objectName),
     querySourcePages: (soql) => queryPageWalk(source, soql),
     getTargetUserId: () => {
       targetUserId ??= target.conn.identity().then(

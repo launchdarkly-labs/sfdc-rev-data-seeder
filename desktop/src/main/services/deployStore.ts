@@ -42,6 +42,102 @@ export function runUuidFor(runId: number): string {
   return `run-${runId}`
 }
 
+/**
+ * S64 P5 (5.3, perf #5): the migration-007 `v_run_record_current` body with
+ * `run_id = @runId` pushed INTO the materialised CTEs.
+ *
+ * MEASURED (2026-10-19, DB copy, 47,591 record_results over 34 runs): SQLite
+ * cannot push an outer `WHERE run_id = ?` into an `AS MATERIALIZED` CTE, so the
+ * view's `WHERE run_id IS NOT NULL` became `run_id > ?` over the WHOLE
+ * idx_record_results_latest index — 50–90 ms per call, linear in every row
+ * ever written across all runs (≈1.5 µs/row → ~1 s at 500k rows), paid twice
+ * per detail-page pull. With the predicate inside: run 15 (14,221 rows)
+ * 68 ms → 23 ms; run 34 (209 rows) 31 ms → ~1 ms; and the cost stops growing
+ * with history. Rows are byte-identical to the views (the counter tests pin
+ * both; `deployStore.store.test.ts` diffs scoped vs view).
+ *
+ * The planner directives of 007 are kept verbatim — AS MATERIALIZED on both
+ * CTEs and the CROSS JOIN so `latest` drives and `rr` is a rowid seek. The
+ * views stay in the schema as the oracle; nothing here is a migration.
+ * Callers write `WITH ${RUN_SCOPED_CURRENT_CTES} SELECT … FROM cur …` and bind
+ * `@runId`.
+ */
+const RUN_SCOPED_CURRENT_CTES = `
+  la AS MATERIALIZED (
+    SELECT run_id, object_api_name, MAX(object_attempt) AS latest_attempt
+    FROM record_results
+    WHERE run_id = @runId AND pass = 1
+    GROUP BY run_id, object_api_name
+  ),
+  latest AS MATERIALIZED (
+    SELECT r.run_id, r.object_api_name, r.source_id, MAX(r.id) AS max_id
+    FROM record_results r
+    JOIN la
+      ON la.run_id = r.run_id AND la.object_api_name = r.object_api_name
+    WHERE r.run_id = @runId AND r.pass = 1 AND r.object_attempt = la.latest_attempt
+    GROUP BY r.run_id, r.object_api_name, r.source_id
+  ),
+  cur AS (
+    SELECT rr.*
+    FROM latest
+    CROSS JOIN record_results rr ON rr.id = latest.max_id
+  )`
+
+/** `v_run_object_queried`, run-scoped (needs `la` from RUN_SCOPED_CURRENT_CTES). */
+const RUN_SCOPED_QUERIED_CTE = `
+  q AS (
+    SELECT r.run_id, r.object_api_name, COUNT(*) AS records_queried
+    FROM record_results r
+    JOIN la
+      ON la.run_id = r.run_id AND la.object_api_name = r.object_api_name
+    WHERE r.run_id = @runId AND r.pass = 1 AND r.retry_pass = 0 AND r.object_attempt = la.latest_attempt
+    GROUP BY r.run_id, r.object_api_name
+  )`
+
+/** The migration-012 `v_run_object_counters` SELECT over `cur` + `q` (same columns, same order). */
+const RUN_SCOPED_OBJECT_COUNTERS = `
+  SELECT
+    cur.run_id,
+    cur.object_api_name,
+    COALESCE(MAX(q.records_queried), 0)                       AS records_queried,
+    SUM(CASE WHEN cur.outcome = 'success' THEN 1 ELSE 0 END)  AS records_deployed,
+    SUM(CASE WHEN cur.outcome = 'failed'  THEN 1 ELSE 0 END)  AS records_failed,
+    SUM(CASE WHEN cur.outcome = 'failed'
+              AND COALESCE(fr.classification, 'root') = 'root'
+             THEN 1 ELSE 0 END)                               AS records_failed_root,
+    SUM(CASE WHEN cur.outcome = 'failed'
+              AND fr.classification = 'cascade'
+             THEN 1 ELSE 0 END)                               AS records_failed_cascade,
+    SUM(CASE WHEN cur.outcome = 'skipped' AND cur.retry_pass = 0
+             THEN 1 ELSE 0 END)                               AS records_skipped,
+    SUM(CASE WHEN cur.outcome IN ('success', 'skipped')
+              AND cur.error_code = 'ALREADY_ON_TARGET'
+             THEN 1 ELSE 0 END)                               AS records_already_on_target
+  FROM cur
+  LEFT JOIN q
+    ON q.run_id = cur.run_id AND q.object_api_name = cur.object_api_name
+  LEFT JOIN failed_records fr
+    ON fr.run_id = cur.run_id AND fr.object_api_name = cur.object_api_name
+   AND fr.source_id = cur.source_id AND fr.pass = 1
+   AND fr.retry_pass = cur.retry_pass AND fr.object_attempt = cur.object_attempt
+  GROUP BY cur.run_id, cur.object_api_name`
+
+/** Exported for the store test's scoped-vs-view diff and the query-plan guard. */
+export const RUN_SCOPED_SQL = {
+  objectCounters: `WITH ${RUN_SCOPED_CURRENT_CTES}, ${RUN_SCOPED_QUERIED_CTE} ${RUN_SCOPED_OBJECT_COUNTERS} ORDER BY cur.object_api_name`,
+  runCounters: `WITH ${RUN_SCOPED_CURRENT_CTES}, ${RUN_SCOPED_QUERIED_CTE}, oc AS (${RUN_SCOPED_OBJECT_COUNTERS})
+    SELECT run_id,
+           SUM(records_queried)           AS records_queried,
+           SUM(records_deployed)          AS records_deployed,
+           SUM(records_failed)            AS records_failed,
+           SUM(records_failed_root)       AS records_failed_root,
+           SUM(records_failed_cascade)    AS records_failed_cascade,
+           SUM(records_skipped)           AS records_skipped,
+           SUM(records_already_on_target) AS records_already_on_target
+    FROM oc
+    GROUP BY run_id`
+} as const
+
 function toStageRow(r: Record<string, unknown>): DeployStageRow {
   return {
     id: Number(r.id),
@@ -187,12 +283,67 @@ export class DeployStore {
        WHERE id = (SELECT deployment_id FROM deploy_runs WHERE id = @runId)
          AND (@force = 1 OR status NOT IN ('Cancelled', 'Stalled'))`
     )
+    // S64 P5 (5.1): the phase stamp rides in the same transaction — the
+    // per-phase durations on the Deployment page are derived from these rows.
+    const stamp = this.db.prepare('INSERT INTO run_phases (run_id, phase, at) VALUES (?, ?, ?)')
     const tx = this.db.transaction(() => {
       const info = runUpdate.run({ runId, phase, now, terminal: terminal ? 1 : 0 })
       if (info.changes === 0) throw new RdsHandlerError('NOT_FOUND', `Run ${runId} not found`)
       statusMirror.run({ runId, status, now, force: force ? 1 : 0 })
+      stamp.run(runId, phase, now)
     })
     tx()
+  }
+
+  // ── S64 P5 (5.1) — run phase timings + peak memory (migration 014) ────────
+
+  /**
+   * Stamp phases the ENGINE does not own (the handler's Connecting / Gates /
+   * Freezing plan / Auditing target), each at the time it actually happened.
+   * The pre-run ones occur before the run row exists, so the handler buffers
+   * them and flushes here right after createRun. Oldest first.
+   */
+  stampRunPhases(runId: number, stamps: ReadonlyArray<{ phase: string; at: number }>): void {
+    if (stamps.length === 0) return
+    const ins = this.db.prepare('INSERT INTO run_phases (run_id, phase, at) VALUES (?, ?, ?)')
+    this.db.transaction(() => {
+      for (const s of stamps) ins.run(runId, s.phase, s.at)
+    })()
+  }
+
+  /** Every phase transition of a run, oldest first (`at`, then insertion order). */
+  runPhases(runId: number): Array<{ phase: string; at: number }> {
+    const rows = this.db
+      .prepare('SELECT phase, at FROM run_phases WHERE run_id = ? ORDER BY at, id')
+      .all(runId) as { phase: string; at: number }[]
+    return rows.map((r) => ({ phase: String(r.phase), at: Number(r.at) }))
+  }
+
+  /** Peak working set per process label (MB) over the run, written once when the sampler stops. */
+  setRunPeakMemory(runId: number, peaksMB: Readonly<Record<string, number>>): void {
+    const info = this.db
+      .prepare('UPDATE deploy_runs SET peak_memory = ? WHERE id = ?')
+      .run(JSON.stringify(peaksMB), runId)
+    if (info.changes === 0) throw new RdsHandlerError('NOT_FOUND', `Run ${runId} not found`)
+  }
+
+  /** The persisted peaks, or null for runs before migration 014 / still running. */
+  runPeakMemory(runId: number): Record<string, number> | null {
+    const row = this.db.prepare('SELECT peak_memory FROM deploy_runs WHERE id = ?').get(runId) as
+      | { peak_memory: string | null }
+      | undefined
+    if (!row || row.peak_memory == null) return null
+    try {
+      const parsed = JSON.parse(row.peak_memory) as unknown
+      if (parsed == null || typeof parsed !== 'object') return null
+      const out: Record<string, number> = {}
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === 'number' && Number.isFinite(v)) out[k] = v
+      }
+      return out
+    } catch {
+      return null
+    }
   }
 
   /** Persist the (object, pass) resume point. Null clears it (between objects). */
@@ -480,6 +631,41 @@ export class DeployStore {
    * FK error against a healed (= now present on target) parent record can't
    * occur, so the shapes differ only for OLI transform-skips nothing FKs to.
    */
+  /**
+   * S64 (P2): the latest-attempt failure rows with their reasons, for the
+   * Deployment page's "Export failure list" — same attempt/retry-pass selection
+   * as `currentFailures`, more columns.
+   */
+  failureExport(
+    runId: number
+  ): { objectApiName: string; sourceId: string; extId: string | null; errorCode: string | null; errorMessage: string | null; classification: string | null }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT fr.object_api_name, fr.source_id, fr.ext_id, fr.error_code, fr.error_message, fr.classification
+         FROM failed_records fr
+         WHERE fr.run_id = @run AND fr.pass = 1
+           AND fr.object_attempt = (
+             SELECT MAX(f2.object_attempt) FROM failed_records f2
+             WHERE f2.run_id = @run AND f2.pass = 1
+               AND f2.object_api_name = fr.object_api_name)
+           AND fr.retry_pass = (
+             SELECT MAX(f3.retry_pass) FROM failed_records f3
+             WHERE f3.run_id = @run AND f3.pass = 1
+               AND f3.object_api_name = fr.object_api_name
+               AND f3.object_attempt = fr.object_attempt)
+         ORDER BY fr.object_api_name, fr.source_id`
+      )
+      .all({ run: runId }) as Record<string, unknown>[]
+    return rows.map((r) => ({
+      objectApiName: String(r.object_api_name),
+      sourceId: String(r.source_id),
+      extId: r.ext_id == null ? null : String(r.ext_id),
+      errorCode: r.error_code == null ? null : String(r.error_code),
+      errorMessage: r.error_message == null ? null : String(r.error_message),
+      classification: r.classification == null ? null : String(r.classification)
+    }))
+  }
+
   currentFailures(runId: number): { objectApiName: string; sourceId: string }[] {
     const rows = this.db
       .prepare(
@@ -538,11 +724,12 @@ export class DeployStore {
   deployedSourceIds(runId: number, objectApiName: string): string[] {
     const rows = this.db
       .prepare(
-        `SELECT source_id AS sid FROM v_run_record_current
-         WHERE run_id = ? AND object_api_name = ? AND outcome = 'success'
+        `WITH ${RUN_SCOPED_CURRENT_CTES}
+         SELECT source_id AS sid FROM cur
+         WHERE object_api_name = @objectApiName AND outcome = 'success'
          ORDER BY id`
       )
-      .all(runId, objectApiName) as { sid: string }[]
+      .all({ runId, objectApiName }) as { sid: string }[]
     return rows.map((r) => r.sid)
   }
 
@@ -718,23 +905,24 @@ export class DeployStore {
   orphanedLinkSummary(runId: number): OrphanedLinkGroup[] {
     const rows = this.db
       .prepare(
-        `SELECT sr.object_api_name AS obj,
+        `WITH ${RUN_SCOPED_CURRENT_CTES}
+         SELECT sr.object_api_name AS obj,
                 sr.field_name      AS fld,
                 sr.ref_object      AS ref,
                 COUNT(DISTINCT sr.source_id) AS n,
                 COUNT(DISTINCT CASE WHEN cur.source_id IS NOT NULL
                                     THEN sr.source_id END) AS landed
          FROM stripped_refs sr
-         LEFT JOIN v_run_record_current cur
+         LEFT JOIN cur
            ON cur.run_id = sr.run_id
           AND cur.object_api_name = sr.ref_object
           AND cur.outcome = 'success'
           AND cur.source_id = sr.parent_source_id
-         WHERE sr.run_id = ?
+         WHERE sr.run_id = @runId
          GROUP BY sr.object_api_name, sr.field_name, sr.ref_object
          ORDER BY n DESC, obj, fld`
       )
-      .all(runId) as { obj: string; fld: string; ref: string; n: number; landed: number }[]
+      .all({ runId }) as { obj: string; fld: string; ref: string; n: number; landed: number }[]
     return rows.map((r) => ({
       objectApiName: String(r.obj),
       fieldName: String(r.fld),
@@ -751,26 +939,27 @@ export class DeployStore {
   skipReasonCounts(runId: number): Array<{ reason: string; count: number }> {
     const rows = this.db
       .prepare(
-        `SELECT
+        `WITH ${RUN_SCOPED_CURRENT_CTES}
+         SELECT
            CASE
              WHEN instr(error_message, ' ') > 0
                THEN substr(error_message, 1, instr(error_message, ' ') - 1)
              ELSE error_message
            END AS reason,
            COUNT(*) AS n
-         FROM v_run_record_current
-         WHERE run_id = ? AND outcome = 'skipped' AND error_message IS NOT NULL
+         FROM cur
+         WHERE outcome = 'skipped' AND error_message IS NOT NULL
          GROUP BY reason
          ORDER BY n DESC, reason`
       )
-      .all(runId) as { reason: string; n: number }[]
+      .all({ runId }) as { reason: string; n: number }[]
     return rows.map((r) => ({ reason: String(r.reason), count: Number(r.n) }))
   }
 
   objectCounters(runId: number): ObjectCounters[] {
     const rows = this.db
-      .prepare('SELECT * FROM v_run_object_counters WHERE run_id = ? ORDER BY object_api_name')
-      .all(runId) as Record<string, unknown>[]
+      .prepare(RUN_SCOPED_SQL.objectCounters)
+      .all({ runId }) as Record<string, unknown>[]
     return rows.map((r) => ({
       runId: Number(r.run_id),
       objectApiName: String(r.object_api_name),
@@ -786,8 +975,9 @@ export class DeployStore {
 
   /** Run-level rollup (recomputeDeploymentCounters SUM semantics). Zeroes when no results yet. */
   runCounters(runId: number): RunCounters {
-    const row = this.db.prepare('SELECT * FROM v_run_counters WHERE run_id = ?').get(runId) as
-      Record<string, unknown> | undefined
+    const row = this.db.prepare(RUN_SCOPED_SQL.runCounters).get({ runId }) as
+      | Record<string, unknown>
+      | undefined
     if (!row) {
       return {
         runId,

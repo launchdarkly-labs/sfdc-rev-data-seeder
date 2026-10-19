@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { KEYLESS_CAUTION } from '../../../shared/wizard'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { describeAssignment } from '../../../shared/roles'
 import { useIpcQuery, useIpcMutation } from '../ipc/hooks'
 import { useToast } from '../ui/Toast'
@@ -74,6 +74,12 @@ export function NewDeploymentPage(): React.JSX.Element {
 
       {loading ? (
         <p className="muted">Loading connections…</p>
+      ) : pickable.length === 0 ? (
+        <div className="banner warn" role="note" data-testid="no-orgs">
+          <strong>No orgs connected yet.</strong> A deployment needs a source and a target org.{' '}
+          <Link to="/connections">Connect your orgs</Link> first — the app lists every org you have signed in to with
+          the Salesforce CLI, or you can add one with OAuth.
+        </div>
       ) : (
         <div className="form">
           <label className="field">

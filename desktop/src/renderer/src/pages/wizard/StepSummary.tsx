@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { PlanObjectView, PlanView } from '../../../../shared/types'
-import { readinessGate, readinessGateMessage } from '../../../../shared/wizard'
+import { nextLabel, readinessGate, readinessGateMessage } from '../../../../shared/wizard'
+import { GLOSSARY } from '../../../../shared/labels'
 import { Badge } from '../../ui/Badge'
 import { DataTable, type Column } from '../../ui/DataTable'
 import { ProgressBar } from '../../ui/ProgressBar'
@@ -26,17 +27,30 @@ const COLUMNS: Column<PlanObjectView>[] = [
       <Badge tone={o.apiStrategy === 'Bulk' ? 'warn' : 'neutral'}>{o.apiStrategy}</Badge>
     )
   },
-  { key: 'tier', header: 'Tier', render: (o) => o.gatingTier ?? '—' },
+  // T-15: "Tier" also means a seed load group elsewhere — this column is the deploy engine's gating.
+  {
+    key: 'tier',
+    header: 'Gating',
+    render: (o) => (
+      <span title={GLOSSARY.gating}>{o.gatingTier ?? '—'}</span>
+    )
+  },
   {
     key: 'flags',
     header: 'Flags',
     render: (o) => (
       <>
-        {o.isJunction && <Badge tone="accent">junction</Badge>}
+        {o.isJunction && (
+          <span className="badge badge-accent" title={GLOSSARY.junction}>
+            junction
+          </span>
+        )}
         {o.hasCircularReference && <Badge tone="warn">cycle</Badge>}
         {o.requiresTriggerBypass && <Badge tone="danger">CPQ</Badge>}
         {o.deferredFields.length > 0 && (
-          <Badge tone="neutral">{o.deferredFields.length} deferred</Badge>
+          <span className="badge badge-neutral" title={GLOSSARY.deferred}>
+            {o.deferredFields.length} deferred
+          </span>
         )}
       </>
     )
@@ -157,12 +171,21 @@ export function StepSummary(): React.JSX.Element {
       </div>
 
       {busy && (
-        <div className="analysis-progress">
+        <div className="analysis-progress" data-testid="analysis-progress">
           <ProgressBar
             value={job?.progress?.value ?? 0}
-            max={job?.progress?.max ?? 3}
-            label={job?.progress?.label ?? 'Starting…'}
+            max={job?.progress?.max ?? 0}
+            indeterminate={!job?.progress?.max}
+            label={job?.progress?.label ?? job?.phase ?? 'Starting analysis…'}
           />
+          {running && job && (
+            <div className="toolbar">
+              <button className="btn" onClick={() => void window.rds.jobCancel(job.id)}>
+                Cancel analysis
+              </button>
+              <span className="muted">Stops at the next object; nothing is written to either org.</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -183,7 +206,7 @@ export function StepSummary(): React.JSX.Element {
 
       {plan && (
         <div className="toolbar">
-          <button className="btn" onClick={() => goToStep('fields')}>
+          <button className="btn" onClick={() => goToStep('templates')}>
             Back
           </button>
           <button
@@ -191,7 +214,7 @@ export function StepSummary(): React.JSX.Element {
             onClick={() => goToStep('plan')}
             disabled={scopeChanged || gate.blocked}
           >
-            Next: plan visualizer
+            {nextLabel('plan')}
           </button>
         </div>
       )}
@@ -227,6 +250,15 @@ function PlanSummary({ plan }: { plan: PlanView }): React.JSX.Element {
         rowKey={(o) => o.objectName}
         empty="No objects in the plan."
       />
+      <p className="muted legend">
+        <strong>Gating</strong> — {GLOSSARY.gating}
+        {plan.objects.some((o) => o.isJunction) && (
+          <>
+            {' '}
+            <span className="badge badge-accent">junction</span> {GLOSSARY.junction}
+          </>
+        )}
+      </p>
     </section>
   )
 }

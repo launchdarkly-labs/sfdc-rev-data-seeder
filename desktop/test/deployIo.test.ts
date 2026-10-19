@@ -11,7 +11,7 @@
  * page (even empty, so the engine's 0-record guard fires), carries totalSize.
  */
 import { describe, expect, it } from 'vitest'
-import { makeDeployIo } from '../src/main/services/deployIo'
+import { makeDeployIo, makeDescribeMemo } from '../src/main/services/deployIo'
 import type { GuardedOrg } from '../src/main/services/salesforce'
 import type { DeployStore } from '../src/main/services/deployStore'
 import type { QueryPage } from '../src/main/engine/deploy/types'
@@ -115,5 +115,64 @@ describe('deployIo.queryTarget', () => {
     for await (const rec of io.queryTarget('SELECT Id FROM OpportunityContactRole')) rows.push(rec)
     expect(rows).toHaveLength(5)
     expect(rows.map((x) => x.Id)).toContain('00K000000000005AAA')
+  })
+})
+
+/**
+ * S64 P5 (5.2, perf #2): one describe per (org, object) for the life of a run.
+ * ~65 describes per 11-object run came from the freeze (2N), every object
+ * context (2N + 2 per retry chunk), the second pass and the relink; the schema
+ * cannot change inside a run. The memo is a Map of PROMISES (concurrent callers
+ * share the in-flight request) and a rejection is EVICTED — the E4E.2 lesson.
+ */
+describe('makeDescribeMemo (S64 P5 5.2)', () => {
+  const fieldsOf = (name: string) => [{ apiName: `${name}Field` }] as never
+
+  it('fetches once per org+object (case-insensitive), serves repeats, keeps the source and target apart', async () => {
+    const calls: string[] = []
+    const memo = makeDescribeMemo(async (org, obj) => {
+      calls.push(`${org.role}:${obj}`)
+      return fieldsOf(obj)
+    })
+    const src = { ...org({}), role: 'source' as const, orgId: '00Dsrc' } as GuardedOrg
+    const tgt = { ...org({}), role: 'target' as const, orgId: '00Dtgt' } as GuardedOrg
+    const [a, b, c] = await Promise.all([memo.get(src, 'Account'), memo.get(src, 'account'), memo.get(tgt, 'Account')])
+    expect(a).toBe(b) // same promise → same array
+    expect(c).not.toBe(a)
+    await memo.get(src, 'Account')
+    await memo.get(tgt, 'Contact')
+    expect(calls).toEqual(['source:Account', 'target:Account', 'target:Contact'])
+    expect(memo.stats()).toEqual({ fetched: 3, served: 2 })
+  })
+
+  it('a rejected describe is NOT pinned: the next call fetches again', async () => {
+    let n = 0
+    const memo = makeDescribeMemo(async (_org, obj) => {
+      n++
+      if (n === 1) throw new Error('transient')
+      return fieldsOf(obj)
+    })
+    const o = org({})
+    await expect(memo.get(o, 'Account')).rejects.toThrow('transient')
+    await expect(memo.get(o, 'Account')).resolves.toEqual(fieldsOf('Account'))
+    expect(n).toBe(2)
+    expect(memo.stats()).toEqual({ fetched: 2, served: 0 })
+  })
+
+  it('makeDeployIo routes describeSource / describeTarget (and the keyless target memo) through the shared memo', async () => {
+    const calls: string[] = []
+    const memo = makeDescribeMemo(async (org, obj) => {
+      calls.push(`${org.role}:${obj}`)
+      return fieldsOf(obj)
+    })
+    const src = { ...org({}), role: 'source' as const, orgId: '00Dsrc' } as GuardedOrg
+    const tgt = { ...org({}), role: 'target' as const, orgId: '00Dtgt' } as GuardedOrg
+    const io = makeDeployIo({ source: src, target: tgt, store: {} as DeployStore, emit: () => {}, describes: memo })
+    await io.describeSource('Opportunity')
+    await io.describeTarget('Opportunity')
+    await io.describeSource('Opportunity') // the freeze, the first pass, the second pass, the relink — one fetch
+    await io.describeTarget('Opportunity')
+    expect(calls).toEqual(['source:Opportunity', 'target:Opportunity'])
+    expect(memo.stats()).toEqual({ fetched: 2, served: 2 })
   })
 })

@@ -1,15 +1,96 @@
+/* ── Design tokens (S64 P1) ───────────────────────────────────────────────────
+   Every colour, radius, type size and shadow the stylesheet uses comes from
+   here. Dark is the default; `[data-theme="light"]` redefines the COLOUR tokens
+   only (opt-in via the Settings toggle — no prefers-color-scheme media query
+   yet, so a light-mode Mac does not flip to an untested theme on install).
+   Tints are derived with color-mix so they follow the token they tint. */
 :root {
-  --bg: #0f1117;
-  --panel: #181b24;
-  --panel-2: #1f2330;
-  --border: #2a2f3e;
-  --text: #e6e9f0;
-  --muted: #9aa3b5;
-  --accent: #5b8def;
+  color-scheme: dark;
+
+  /* colour */
+  /* Direction C (S64 P4): true graphite neutrals, ONE warm accent for brand + primary
+     actions (dark text on it ≈ 9:1), warnings in a cooler yellow with an outlined style so
+     the accent is never read as a warning. */
+  --bg: #121316;
+  --panel: #1b1d22;
+  --panel-2: #24272e;
+  --border: #30343c;
+  --text: #eceef2;
+  --muted: #9ba3ad;
+  --accent: #f29d38;
+  --accent-strong: #f29d38; /* primary-button fill: dark text */
+  --on-accent: #121316;
+  --link: #f3ad59;
   --green: #3fbf7f;
-  --amber: #e0a63c;
-  --red: #e0564f;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --amber: #e3c15a; /* warning — outlined badges + left borders only */
+  --red: #e5605a;
+  --danger-strong: #c43d36; /* danger-button fill: white text ≥ 4.5:1 */
+  --on-danger: #ffffff;
+
+  /* tints (badges, pills, selected rows) */
+  --accent-tint: color-mix(in srgb, var(--accent) 15%, transparent);
+  --accent-tint-soft: color-mix(in srgb, var(--accent) 8%, transparent);
+  --green-tint: color-mix(in srgb, var(--green) 15%, transparent);
+  --amber-tint: color-mix(in srgb, var(--amber) 15%, transparent);
+  --red-tint: color-mix(in srgb, var(--red) 15%, transparent);
+  --muted-tint: color-mix(in srgb, var(--muted) 12%, transparent);
+  --bg-subtle: color-mix(in srgb, var(--text) 6%, transparent);
+  --ring: color-mix(in srgb, var(--accent) 35%, transparent);
+  --backdrop: rgba(0, 0, 0, 0.55);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+
+  /* type */
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* 14px base on a 1.25 scale (S64 P4) */
+  --fs-xs: 12px; /* floor — nothing in the app renders below 12px */
+  --fs-sm: 12.5px;
+  --fs-md: 14px;
+  --fs-lg: 15px;
+  --fs-xl: 17px;
+  --fs-2xl: 22px;
+
+  /* space + shape */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+  --z-modal: 100;
+  --z-toast: 200;
+
+  font-family: var(--font-ui);
+}
+
+/* Light theme — colour tokens only. Opt-in: <html data-theme="light">. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f4f6;
+  --panel: #ffffff;
+  --panel-2: #ecedf0;
+  --border: #d7d9de;
+  --text: #17191d;
+  --muted: #5c6370;
+  --accent: #b45309; /* 4.6:1 on --bg; white text 5.0:1 */
+  --accent-strong: #b45309;
+  --on-accent: #ffffff;
+  --link: #9a4a0a;
+  --green: #167a46;
+  --amber: #8a5a06;
+  --red: #c73e37;
+  --danger-strong: #b2362f;
+  --backdrop: rgba(23, 25, 29, 0.35);
+  --shadow-1: 0 1px 2px rgba(23, 25, 29, 0.08), 0 0 0 1px rgba(23, 25, 29, 0.04);
+  --shadow-2: 0 6px 18px rgba(23, 25, 29, 0.12);
+  --shadow-modal: 0 20px 60px rgba(23, 25, 29, 0.25);
 }
 
 * {
@@ -19,6 +100,41 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+a {
+  color: var(--link);
+}
+a:visited {
+  color: var(--link);
+}
+h2 {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  margin: 18px 0 8px;
+}
+h3 {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  margin: 14px 0 6px;
+}
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+/* Long-form help text (How To): one size up, comfortable measure. */
+.prose {
+  font-size: var(--fs-lg);
+  line-height: 1.6;
+  max-width: 76ch;
+}
+.prose h2 {
+  font-size: 17px;
+  margin-top: 24px;
+}
+.prose h3 {
+  font-size: var(--fs-lg);
 }
 
 .shell {
@@ -36,36 +152,22 @@ body {
 }
 .sidebar .brand {
   font-weight: 700;
-  font-size: 15px;
+  font-size: var(--fs-xl);
   padding: 6px 10px 16px;
   letter-spacing: 0.3px;
 }
-.sidebar button {
-  all: unset;
-  cursor: pointer;
-  padding: 8px 10px;
-  border-radius: 8px;
-  color: var(--muted);
-  font-size: 13px;
-}
-.sidebar button.active,
-.sidebar button:hover {
-  background: var(--panel-2);
-  color: var(--text);
-}
-
 .content {
   flex: 1;
   overflow: auto;
   padding: 24px 28px;
 }
 .content h1 {
-  font-size: 18px;
+  font-size: var(--fs-2xl);
   margin: 0 0 4px;
 }
 .content .sub {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin-bottom: 20px;
 }
 
@@ -78,66 +180,118 @@ body {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 7px 14px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 .btn:hover {
   border-color: var(--accent);
+}
+/* A router <Link> styled as a button must not inherit link styling. */
+a.btn {
+  text-decoration: none;
+  color: var(--text);
+  display: inline-block;
+}
+a.btn.primary {
+  color: var(--on-accent);
 }
 .btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
 .btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--on-accent);
 }
 
-table.orgs {
+/* ── Table (S64 P3, ux C-4/C-14) ─────────────────────────────────────────────
+   ONE base. `table.orgs`, `.datatable`, `.automation-table` and `.plan-order`
+   used to carry four copies of this body; they are aliases of `.table` now and
+   keep working. `.table--compact` (and the two dense aliases) tighten the row
+   padding. Wide tables sit in `.table-wrap` so they scroll, not clip. */
+.table,
+table.orgs,
+.datatable,
+.automation-table,
+.plan-order {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
-table.orgs th {
+.table th,
+table.orgs th,
+.datatable th,
+.automation-table th,
+.plan-order th {
   text-align: left;
   color: var(--muted);
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
-table.orgs td {
+.table td,
+table.orgs td,
+.datatable td,
+.automation-table td,
+.plan-order td {
   padding: 9px 10px;
   border-bottom: 1px solid var(--border);
+  text-align: left;
 }
-table.orgs tr:hover td {
+.table tr:hover td,
+table.orgs tr:hover td,
+.datatable tr:hover td,
+.automation-table tr:hover td,
+.plan-order tr:hover td {
   background: var(--panel);
+}
+.table--compact th,
+.table--compact td,
+.automation-table th,
+.automation-table td,
+.plan-order th,
+.plan-order td {
+  padding: 5px 10px;
+}
+.table th.sortable,
+.datatable th.sortable {
+  user-select: none;
+}
+.table th.sortable:hover,
+.datatable th.sortable:hover {
+  color: var(--text);
+}
+.table .align-right,
+.datatable td.align-right,
+.datatable th.align-right {
+  text-align: right;
 }
 
 .pill {
   display: inline-block;
   padding: 2px 9px;
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .pill.source {
-  background: rgba(91, 141, 239, 0.15);
+  background: var(--accent-tint);
   color: var(--accent);
 }
 .pill.target {
-  background: rgba(63, 191, 127, 0.15);
+  background: var(--green-tint);
   color: var(--green);
 }
 .pill.unassigned {
-  background: rgba(154, 163, 181, 0.12);
+  background: var(--muted-tint);
   color: var(--muted);
 }
 .pill.prod {
-  background: rgba(224, 86, 79, 0.15);
+  background: var(--red-tint);
   color: var(--red);
 }
 
@@ -158,18 +312,18 @@ select.role {
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .banner {
   background: var(--panel);
   border: 1px solid var(--border);
   border-left: 3px solid var(--red);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px 14px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin-bottom: 14px;
 }
 
@@ -197,10 +351,10 @@ select.role {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin: 10px 0 14px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--panel);
   border: 1px solid var(--border);
   border-left: 3px solid var(--border);
@@ -254,9 +408,9 @@ select.role {
 .sidebar a {
   text-decoration: none;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .sidebar a.active,
 .sidebar a:hover {
@@ -265,7 +419,7 @@ select.role {
 }
 .sidebar-footer {
   margin-top: auto;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 8px 10px;
 }
 
@@ -273,28 +427,29 @@ select.role {
 .badge {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .badge-neutral {
-  background: rgba(154, 163, 181, 0.12);
+  background: var(--muted-tint);
   color: var(--muted);
 }
 .badge-accent {
-  background: rgba(91, 141, 239, 0.15);
+  background: var(--accent-tint);
   color: var(--accent);
 }
 .badge-success {
-  background: rgba(63, 191, 127, 0.15);
+  background: var(--green-tint);
   color: var(--green);
 }
 .badge-warn {
-  background: rgba(224, 166, 60, 0.15);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--amber);
   color: var(--amber);
 }
 .badge-danger {
-  background: rgba(224, 86, 79, 0.15);
+  background: var(--red-tint);
   color: var(--red);
 }
 
@@ -304,7 +459,7 @@ select.role {
   height: 18px;
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 .progress-fill {
@@ -326,7 +481,7 @@ select.role {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text);
 }
 
@@ -339,9 +494,9 @@ select.role {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 7px 26px 7px 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   min-width: 220px;
 }
 .search-clear {
@@ -353,38 +508,10 @@ select.role {
   border: none;
   color: var(--muted);
   cursor: pointer;
-  font-size: 15px;
+  font-size: var(--fs-xl);
 }
 
-/* ── DataTable ── */
-.datatable {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.datatable th {
-  text-align: left;
-  color: var(--muted);
-  font-weight: 500;
-  font-size: 12px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.datatable th.sortable {
-  cursor: pointer;
-  user-select: none;
-}
-.datatable th.sortable:hover {
-  color: var(--text);
-}
-.datatable td {
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.datatable td.align-right,
-.datatable th.align-right {
-  text-align: right;
-}
+/* ── DataTable (table body shared with `.table` above) ── */
 .sort-caret {
   color: var(--accent);
 }
@@ -393,36 +520,37 @@ select.role {
   align-items: center;
   gap: 12px;
   margin-top: 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ── Modal ── */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: var(--z-modal);
 }
 .modal {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   min-width: 380px;
   max-width: 560px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-modal);
 }
 .modal-header {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--fs-lg);
+  margin: 0; /* it is an <h2> now (ux A-6) — the global h2 margin must not apply */
   padding: 16px 18px;
   border-bottom: 1px solid var(--border);
 }
 .modal-body {
   padding: 16px 18px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text);
 }
 .modal-footer {
@@ -433,9 +561,9 @@ select.role {
   border-top: 1px solid var(--border);
 }
 .btn.danger {
-  background: var(--red);
-  border-color: var(--red);
-  color: #fff;
+  background: var(--danger-strong);
+  border-color: var(--danger-strong);
+  color: var(--on-danger);
 }
 
 /* ── Toast ── */
@@ -446,12 +574,12 @@ select.role {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  z-index: 200;
+  z-index: var(--z-toast);
 }
 .toast {
   padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-md);
   border: 1px solid var(--border);
   background: var(--panel-2);
   cursor: pointer;
@@ -477,7 +605,7 @@ select.role {
 .job-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -487,7 +615,7 @@ select.role {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 /* ── Forms ── */
@@ -501,7 +629,7 @@ select.role {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .field > span {
   color: var(--muted);
@@ -510,9 +638,21 @@ select.role {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
+}
+/* ux C-3: a bare <select> / text input looks like `.text-input` without a
+   class. `:where()` keeps these at zero specificity so every component class
+   (`.filter-input`, `.search-input`, `.input-sm`, `select.role` …) still wins. */
+:where(select, input[type='text'], input[type='search'], input[type='number'], input:not([type])) {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  font-size: var(--fs-md);
+  font-family: inherit;
 }
 
 /* ── Wizard ── */
@@ -529,7 +669,7 @@ select.role {
   all: unset;
   cursor: pointer;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--muted);
   border-bottom: 2px solid transparent;
 }
@@ -550,7 +690,7 @@ select.role {
   color: var(--muted);
 }
 .wizard-body h2 {
-  font-size: 15px;
+  font-size: var(--fs-xl);
   margin: 0 0 12px;
 }
 .intersection-banner {
@@ -562,7 +702,7 @@ select.role {
 /* ── ObjectPicker ── */
 .object-picker {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   margin-bottom: 16px;
 }
@@ -596,7 +736,7 @@ select.role {
 .picker-packages > h4 {
   margin: 0 0 6px;
   padding: 0 12px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
@@ -616,7 +756,7 @@ select.role {
   gap: 8px;
   width: 100%;
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 .package-row:hover {
@@ -624,8 +764,8 @@ select.role {
   background: var(--panel-2);
 }
 .package-row.active {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-strong);
+  color: var(--on-accent);
 }
 .package-name {
   overflow: hidden;
@@ -634,7 +774,7 @@ select.role {
 }
 .package-count {
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   opacity: 0.85;
 }
 
@@ -649,23 +789,6 @@ select.role {
   }
 }
 
-.chip {
-  all: unset;
-  cursor: pointer;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: var(--muted);
-  border: 1px solid var(--border);
-}
-.chip:hover {
-  color: var(--text);
-}
-.chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
 .picker-list {
   list-style: none;
   margin: 0;
@@ -679,7 +802,7 @@ select.role {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 .picker-row:hover {
@@ -687,8 +810,8 @@ select.role {
 }
 .picker-name {
   flex: 1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
 }
 
 /* 5B.5 Mappings */
@@ -698,43 +821,37 @@ select.role {
 .map-object-hdr {
   width: 100%;
   text-align: left;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
 }
+.select,
+.input-sm,
 .map-strategy,
 .map-matchfield,
 .map-customvalue {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
+.input-sm,
 .map-matchfield,
 .map-customvalue {
   width: 130px;
 }
 .map-detail {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--muted);
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-/* 5B.8 Plan review */
+/* 5B.8 Plan review (table body shared with `.table`) */
 .plan-order {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
   margin-top: 8px;
-}
-.plan-order th,
-.plan-order td {
-  border-bottom: 1px solid var(--border);
-  padding: 6px 10px;
-  text-align: left;
 }
 .plan-order .num {
   text-align: right;
@@ -764,7 +881,7 @@ select.role {
 }
 .btn.icon {
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin-left: 4px;
 }
 
@@ -773,46 +890,37 @@ select.role {
   margin-top: 20px;
 }
 .automation-panel h3 {
-  font-size: 14px;
+  font-size: var(--fs-lg);
   margin-bottom: 8px;
 }
+.check,
 .master-toggle {
   display: block;
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin: 4px 0;
 }
 .automation-summary {
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .automation-table-wrap {
   max-height: 300px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
-.automation-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.automation-table th,
-.automation-table td {
-  border-bottom: 1px solid var(--border);
-  padding: 5px 10px;
-  text-align: left;
-}
+/* `.automation-table` body is shared with `.table` (compact padding). */
 .cpq-notice ol {
   margin: 8px 0 8px 20px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .cpq-attest {
   display: block;
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
   margin: 8px 0;
 }
 .deploy-gate-note {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .sr-only {
   position: absolute;
@@ -830,9 +938,9 @@ select.role {
   cursor: default;
 }
 
-/* Transient confirmation next to the Org Connections role picker. */
+/* Transient confirmation next to the Connections role picker. */
 .role-saved {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
@@ -846,25 +954,25 @@ select.role {
 .kpi {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 12px;
   min-width: 100px;
   display: flex;
   flex-direction: column;
 }
 .kpi-value {
-  font-size: 18px;
+  font-size: var(--fs-2xl);
   font-weight: 600;
 }
 .kpi-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 .error-text {
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
   margin: 8px 0 0;
   max-height: 260px;
   overflow: auto;
@@ -872,7 +980,7 @@ select.role {
 .restore-steps {
   margin: 6px 0 0 18px;
   padding: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .restore-steps li {
   margin-bottom: 4px;
@@ -883,17 +991,17 @@ select.role {
   gap: 10px;
 }
 .card-meta {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 .card-actions {
   display: flex;
   gap: 12px;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .error-snippet {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--red);
   white-space: nowrap;
   overflow: hidden;
@@ -909,7 +1017,7 @@ select.role {
 .scope-mode {
   /* kill the native fieldset bevel; match the app's other panels */
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--panel);
   padding: 12px 14px;
   margin: 0 0 20px;
@@ -924,7 +1032,7 @@ select.role {
 .scope-mode > h3 {
   padding: 0;
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -936,7 +1044,7 @@ select.role {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.45;
   color: var(--text);
 }
@@ -976,8 +1084,8 @@ select.role {
   gap: 12px;
 }
 .filter-object {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -987,22 +1095,21 @@ select.role {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 7px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
   width: 100%;
   box-sizing: border-box;
 }
 .filter-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgb(91 141 239 / 25%);
+    border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--ring);
 }
 .filter-status {
   grid-column: 2;
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 /* The COUNT()/validation verdict is the whole point of the filter row, and
    both states were rendering in default body text (`.ok` only ever matched
@@ -1030,7 +1137,7 @@ select.role {
   margin-bottom: 12px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--panel);
 }
 .selection-pills-head {
@@ -1042,7 +1149,7 @@ select.role {
 }
 .selection-pills-head > h3 {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
@@ -1055,47 +1162,47 @@ select.role {
   margin: 0;
   padding: 0;
 }
-.pill {
+.sel-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 3px 6px 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--panel-2);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
   color: var(--text);
   max-width: 100%;
 }
-.pill-label {
+.sel-pill-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pill-remove {
+.sel-pill-remove {
   all: unset;
   cursor: pointer;
   line-height: 1;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--fs-lg);
 }
-.pill-remove:hover {
+.sel-pill-remove:hover {
   color: var(--text);
   background: var(--border);
 }
-button.pill-more {
+button.sel-pill-more {
   all: unset;
   cursor: pointer;
   padding: 3px 10px;
   border: 1px dashed var(--border);
-  border-radius: 999px;
-  font-size: 12px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
-button.pill-more:hover {
+button.sel-pill-more:hover {
   color: var(--text);
 }
 .btn.subtle {
@@ -1135,23 +1242,22 @@ button.pill-more:hover {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 7px 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .filter-add > select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgb(91 141 239 / 25%);
+    border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--ring);
 }
 .filter-remove {
   all: unset;
   cursor: pointer;
   line-height: 1;
   padding: 2px 7px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
-  font-size: 15px;
+  font-size: var(--fs-xl);
 }
 .filter-remove:hover {
   color: var(--text);
@@ -1181,14 +1287,14 @@ button.pill-more:hover {
 .stale-orgs summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .stale-orgs table {
   margin-top: 8px;
 }
 .btn-small {
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ── S57 (B2): the missing-parent advisor on the Scope step ─────────────────
@@ -1208,7 +1314,7 @@ button.pill-more:hover {
 }
 .advisor > h3,
 .advisor-head > h3 {
-  font-size: 13px;
+  font-size: var(--fs-md);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -1218,10 +1324,10 @@ button.pill-more:hover {
   background: var(--panel);
   border: 1px solid var(--border);
   border-left: 3px solid var(--amber);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px 14px;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .advisor-card.required {
   border-left-color: var(--red);
@@ -1233,7 +1339,7 @@ button.pill-more:hover {
   margin: 4px 0;
 }
 .advisor-card code {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   word-break: break-all;
 }
 .advisor-card .toolbar {
@@ -1246,7 +1352,7 @@ button.pill-more:hover {
   vertical-align: top;
 }
 .template-desc {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin-top: 2px;
 }
 .template-actions {
@@ -1275,7 +1381,7 @@ button.pill-more:hover {
   flex-wrap: wrap;
 }
 .builder-note {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin: 6px 0 14px;
 }
 .builder-tabs {
@@ -1292,15 +1398,15 @@ button.pill-more:hover {
   vertical-align: middle;
 }
 .tier-name {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
   padding: 2px 6px;
 }
 .batch-input {
   width: 64px;
 }
 .where-cell code {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   word-break: break-all;
 }
 .tier-move {
@@ -1318,9 +1424,9 @@ button.pill-more:hover {
 .tier-section {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .tier-section > summary {
   cursor: pointer;
@@ -1328,7 +1434,7 @@ button.pill-more:hover {
 }
 .tier-section .inline-h2 {
   display: inline;
-  font-size: 15px;
+  font-size: var(--fs-xl);
   margin: 0;
   color: var(--text);
 }
@@ -1342,7 +1448,7 @@ button.pill-more:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .row-inputs {
   display: flex;
@@ -1350,7 +1456,7 @@ button.pill-more:hover {
   gap: 8px;
   align-items: center;
   margin: 6px 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .row-inputs .field {
   max-width: 180px;
@@ -1358,7 +1464,7 @@ button.pill-more:hover {
 .seed-settings h3,
 .post-refresh-builder h2,
 .post-refresh-builder h3 {
-  font-size: 14px;
+  font-size: var(--fs-lg);
   margin: 18px 0 6px;
 }
 .catalog-toolbar {
@@ -1369,10 +1475,10 @@ button.pill-more:hover {
   max-height: 360px;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 .automation-table tr.chosen td {
-  background: rgba(91, 141, 239, 0.08);
+  background: var(--accent-tint-soft);
 }
 .patch-row {
   display: grid;
@@ -1385,7 +1491,7 @@ button.pill-more:hover {
   display: inline-flex;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .group-pick {
   display: inline-flex;
@@ -1404,13 +1510,13 @@ button.pill-more:hover {
 .run-steps,
 .run-options {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px 14px;
 }
 .run-steps legend,
 .run-options legend {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 0 6px;
 }
 .run-seed {
@@ -1426,7 +1532,7 @@ button.pill-more:hover {
   margin-left: 22px;
 }
 .dry-run-caveat {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   border-left: 3px solid var(--amber);
   padding-left: 10px;
 }
@@ -1437,31 +1543,31 @@ button.pill-more:hover {
   margin-bottom: 10px;
 }
 .run-summary h3 {
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin: 12px 0 6px;
 }
 .problem-list {
   margin: 6px 0;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .seed-detail {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 4px 0;
 }
 .parity-row {
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin: 6px 0;
 }
 .run-log {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   max-height: 320px;
   overflow: auto;
   white-space: pre-wrap;
@@ -1474,7 +1580,7 @@ button.pill-more:hover {
 .plan-warnings {
   margin: 0 0 14px;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .plan-warnings li {
   margin: 2px 0;
@@ -1490,7 +1596,7 @@ button.pill-more:hover {
   margin: 10px 0 14px;
 }
 .stages h2 {
-  font-size: 15px;
+  font-size: var(--fs-xl);
   margin: 0 0 8px;
 }
 .stage-list {
@@ -1507,9 +1613,9 @@ button.pill-more:hover {
   gap: 10px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .stage-pos {
   width: 22px;
@@ -1519,7 +1625,7 @@ button.pill-more:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 .stage-label {
@@ -1531,13 +1637,13 @@ button.pill-more:hover {
 }
 .stage-note {
   flex-basis: 100%;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .stage-steps {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .stage-groups {
   display: inline-flex;
@@ -1549,7 +1655,7 @@ button.pill-more:hover {
   margin: 0;
 }
 .already-note {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* ── S63: text-Id relink table (Deployment page) + the Plan-step info banner ─── */
@@ -1557,24 +1663,351 @@ button.pill-more:hover {
   margin: 14px 0;
 }
 .relinks h2 {
-  font-size: 15px;
+  font-size: var(--fs-xl);
   margin: 0 0 4px;
 }
 .relinks p.muted {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .relinks .btn-small {
   margin-left: 6px;
 }
 .relink-why td {
-  background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
-  font-size: 12px;
+  background: var(--bg-subtle);
+  font-size: var(--fs-sm);
 }
 .relink-why ul {
   margin: 4px 0;
   padding-left: 18px;
 }
 .relink-why code {
-  font-size: 11px;
+  font-size: var(--fs-xs);
+}
+
+/* ── S64 P1: rules for classes that had none, overflow guards, focus ────────
+   The class-vs-CSS gap (.scope-rules, .banner.warn, .footprint, .plan-warnings,
+   .banner.info …) is now checked by test/cssClasses.test.ts. */
+.banner.error {
+  border-left-color: var(--red);
+}
+.banner.info {
+  border-left-color: var(--accent);
+}
+.error,
+p.error {
+  color: var(--red);
+  font-size: var(--fs-md);
+  margin: var(--space-3) 0;
+}
+.pill.oauth {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.pill.cli {
+  background: var(--muted-tint);
+  color: var(--muted);
+}
+.footprint {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin: var(--space-2) 0 var(--space-4);
+}
+.oauth-add {
+  margin: var(--space-5) 0;
+  padding: var(--space-5);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.oauth-add-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+/* S64 P6 (D6): the production-pin editor shares the OAuth panel's card and row. */
+.prod-pin {
+  margin: var(--space-5) 0;
+  padding: var(--space-5);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  max-width: 720px;
+}
+.prod-pin-help {
+  font-size: var(--fs-sm);
+  margin: var(--space-2) 0 0;
+}
+.prod-pin .text-input.mono {
+  font-family: var(--font-mono);
+  min-width: 22ch;
+}
+.advisor-enrichment {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin: var(--space-1) 0;
+}
+.analysis-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 14px;
+}
+.plan-summary {
+  margin-top: var(--space-3);
+}
+.plan-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.scope-clause {
+  font-size: var(--fs-sm);
+  white-space: normal;
+  word-break: break-all;
+}
+.read-from {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+.probe-result {
+  margin-top: var(--space-3);
+  font-size: var(--fs-sm);
+}
+.seed-ref {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+/* Wide tables (Summary scope clauses, report tables) scroll inside their
+   wrapper instead of clipping at the window edge. */
+.table-wrap,
+.datatable-wrap,
+.automation-table-wrap,
+.catalog-table-wrap {
+  overflow-x: auto;
+}
+.ml-2 {
+  margin-left: var(--space-3);
+}
+.mr-3 {
+  margin-right: var(--space-4);
+}
+/* Keyboard focus, app-wide. Several interactive classes use `all: unset`,
+   which removed the UA outline; this rule is last so it wins on equal specificity. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0.01s !important;
+  }
+}
+
+/* ── S64 P2: breadcrumb, indeterminate progress, welcome checklist, filters ─ */
+.breadcrumb {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin-bottom: var(--space-2);
+}
+.breadcrumb a {
+  color: var(--muted);
+}
+.breadcrumb a:hover {
+  color: var(--text);
+}
+.progress-indeterminate .progress-fill {
+  width: 40%;
+  animation: progress-slide 1.4s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+.welcome {
+  max-width: 640px;
+  margin: var(--space-4) 0 var(--space-6);
+}
+.welcome-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.welcome-steps > li {
+  display: flex;
+  gap: var(--space-5);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) 14px;
+}
+.welcome-steps > li.done {
+  opacity: 0.7;
+}
+.welcome-steps p {
+  margin: var(--space-1) 0 var(--space-3);
+}
+.welcome-tick {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--green);
+  font-weight: 700;
+}
+.welcome-steps > li.done .welcome-tick {
+  border-color: var(--green);
+}
+.filter-bar {
+  align-items: center;
+}
+.filter-bar .text-input {
+  min-width: 260px;
+}
+.check.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+.verify-error > summary {
+  cursor: pointer;
+}
+.verify-error .error-text {
+  max-height: 120px;
+}
+
+/* ── S64 P4: elevation (direction C — cards lift by shadow, borders go quiet) ── */
+.job-card,
+.kpi,
+.oauth-add,
+.prod-pin,
+.welcome-steps > li,
+.selection-pills,
+.scope-mode,
+.advisor-card,
+.object-picker,
+.stage,
+.tier-section,
+.run-log,
+.banner,
+.outcome {
+  box-shadow: var(--shadow-1);
+}
+.job-card,
+.kpi,
+.oauth-add,
+.prod-pin,
+.welcome-steps > li,
+.scope-mode,
+.selection-pills,
+.object-picker {
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+}
+.sidebar {
+  box-shadow: 1px 0 0 var(--border);
+  border-right: none;
+}
+/* brand block */
+a.brand,
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4) var(--space-6);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: var(--fs-lg);
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.brand-version {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--muted);
+}
+.sidebar a.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.sidebar a.nav-item .icon {
+  flex: none;
+  opacity: 0.85;
+}
+.sidebar-by {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  padding: var(--space-2) var(--space-4) 0;
+}
+.icon {
+  display: inline-block;
+  vertical-align: -3px;
+}
+.rds-mark {
+  flex: none;
+  display: block;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+/* settings page */
+.settings-section {
+  max-width: 640px;
+  margin-bottom: var(--space-6);
+}
+.theme-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.theme-option {
+  display: flex;
+  gap: var(--space-4);
+  align-items: baseline;
+  padding: var(--space-4) 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+}
+.theme-option.selected {
+  border-color: var(--accent);
+}
+.settings-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+}
+.settings-facts dt {
+  color: var(--muted);
+}
+.settings-facts dd {
+  margin: 0;
 }

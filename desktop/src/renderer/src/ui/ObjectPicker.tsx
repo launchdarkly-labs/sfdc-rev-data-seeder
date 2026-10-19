@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { DeployableObject } from '../../../shared/types'
 import { SearchInput } from './SearchInput'
 import { Badge } from './Badge'
+import { EmptyState } from './EmptyState'
 import { canHostExtIdField } from '../../../shared/extIdCapability'
 
 /**
@@ -128,7 +129,14 @@ export function ObjectPicker({
               </label>
             </li>
           ))}
-          {visible.length === 0 && <li className="muted">No objects match.</li>}
+          {visible.length === 0 && (
+            <li className="picker-empty">
+              <EmptyState
+                title="No objects match."
+                hint={search ? 'Clear the search or pick another package.' : 'Pick another package.'}
+              />
+            </li>
+          )}
         </ul>
 
         <aside className="picker-packages" aria-label="Filter by package">

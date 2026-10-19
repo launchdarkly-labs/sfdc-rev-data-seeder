@@ -108,7 +108,9 @@ describe('StepScope — S57 B3: nothing will deploy ⇒ Next disabled', () => {
     await screen.findByRole('heading', { name: 'Scope' })
     await screen.findByTestId('scope-empty')
     expect(screen.getByTestId('scope-empty')).toHaveTextContent(/Nothing will deploy/)
-    expect(screen.getByRole('button', { name: 'Next: readiness' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Next: Readiness' })).toBeDisabled()
+    // F-8 / A-9: the reason is a visible line, not only the button's title.
+    expect(screen.getByTestId('scope-gate-note')).toHaveTextContent(/Next is disabled until at least one filter returns records/)
   })
 
   it('one matching record keeps Next enabled (V3)', async () => {
@@ -118,7 +120,7 @@ describe('StepScope — S57 B3: nothing will deploy ⇒ Next disabled', () => {
     await screen.findByRole('heading', { name: 'Scope' })
     await screen.findByText(/1 record/)
     expect(screen.queryByTestId('scope-empty')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Next: readiness' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Next: Readiness' })).toBeEnabled()
   })
 
   it('an unfiltered ROOT keeps Next enabled even when the filtered object is at 0 (dep 37)', async () => {
@@ -128,7 +130,7 @@ describe('StepScope — S57 B3: nothing will deploy ⇒ Next disabled', () => {
     await screen.findByRole('heading', { name: 'Scope' })
     await screen.findByText(/0 records — nothing will deploy for Account/)
     expect(screen.queryByTestId('scope-empty')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Next: readiness' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Next: Readiness' })).toBeEnabled()
   })
 
   it('an invalid clause never blocks (the error is its own message)', async () => {
@@ -137,7 +139,7 @@ describe('StepScope — S57 B3: nothing will deploy ⇒ Next disabled', () => {
     renderScope()
     await screen.findByText(/MALFORMED_QUERY/)
     expect(screen.queryByTestId('scope-empty')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Next: readiness' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Next: Readiness' })).toBeEnabled()
   })
 })
 

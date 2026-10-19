@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 import type { JobEvent, JobKind, JobSummary } from '../../../shared/types'
 
 /**
@@ -25,6 +26,15 @@ export const useJobsStore = create<JobsState>((set) => ({
   applyEvent: (event) =>
     set((state) => {
       const existing = state.byId[event.jobId]
+      // S64 P5 (5.5a): a `log` line changes nothing on the summary, so the
+      // state is returned UNCHANGED (same reference) — before this, every log
+      // line built a new job object and a new `byId`, and every page
+      // subscribed to a job (Home, the Deployment page, the run report, the
+      // Plan/Summary steps) re-rendered once per line: several per 2,000-record
+      // page, dozens during automation restore. The one exception is a log
+      // for a job this store has never seen: the stub it creates is how a page
+      // learns the job exists before `hydrate` catches up.
+      if (event.kind === 'log' && existing) return state
       const base: JobSummary = existing ?? {
         id: event.jobId,
         kind: 'demo',
@@ -76,6 +86,19 @@ export function useJob(jobId: string | undefined): JobSummary | undefined {
 /** Count of currently-running jobs (sidebar activity indicator). */
 export function useRunningJobCount(): number {
   return useJobsStore((s) => s.order.filter((id) => s.byId[id]?.status === 'running').length)
+}
+
+/**
+ * The running jobs themselves, in insertion order (S64 P3: the sidebar footer
+ * lists them in a popover with a Cancel each). Array selector → useShallow,
+ * or every store change re-renders the shell.
+ */
+export function useRunningJobs(): JobSummary[] {
+  return useJobsStore(
+    useShallow((s) =>
+      s.order.map((id) => s.byId[id]).filter((j): j is JobSummary => j?.status === 'running')
+    )
+  )
 }
 
 /**

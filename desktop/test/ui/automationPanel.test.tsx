@@ -265,8 +265,10 @@ describe('AutomationPanel + CPQ attestation (5B.8-b)', () => {
     const user = userEvent.setup()
     renderPlanStep()
     // disableAutomations defaults ON, duplicate rules OFF → VR+Flow+Trigger = 3.
-    await screen.findByText(/3.*item.*will be disabled|items will be disabled/)
+    // (The Pre-flight row repeats the count in its one-line summary — scope to the panel's line.)
+    await screen.findByText(/will be disabled/, { selector: '.automation-summary' })
     expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByTestId('preflight-automation')).toHaveTextContent('3 of 4 items will be disabled')
 
     // Turn the dup-rule master on → 4.
     await user.click(screen.getByLabelText('Disable duplicate rules while deploying'))
@@ -355,6 +357,24 @@ describe('AutomationPanel + CPQ attestation (5B.8-b)', () => {
     expect(screen.queryByText('Opp_VR')).not.toBeInTheDocument()
     expect(screen.queryByText(/Required — disable Salesforce CPQ triggers/)).not.toBeInTheDocument()
     await waitFor(() => expect(cfg().cpqAttestation).toBe(false))
+  })
+
+  it('A-13: the panel heading does not contain the Re-scan button', async () => {
+    renderPlanStep()
+    const heading = await screen.findByRole('heading', { name: 'Target org automation' })
+    expect(heading.querySelector('button')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Re-scan' })).toBeInTheDocument()
+  })
+
+  it('IA-7: the CPQ row is open and "to do" until the box is ticked, then reads done', async () => {
+    const user = userEvent.setup()
+    renderPlanStep()
+    const row = await screen.findByTestId('preflight-cpq')
+    await waitFor(() => expect(row).toHaveAttribute('data-state', 'todo'))
+    expect(row).toHaveTextContent('Confirm you checked Triggers Disabled')
+    await user.click(screen.getByLabelText(/Confirmed — I checked/))
+    await waitFor(() => expect(row).toHaveAttribute('data-state', 'ok'))
+    expect(row).toHaveTextContent('Confirmed for this scan')
   })
 
   it('a config edit made WHILE discovery runs survives the post-scan attestation reset', async () => {

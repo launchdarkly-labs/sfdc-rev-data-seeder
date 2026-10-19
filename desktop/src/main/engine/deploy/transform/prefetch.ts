@@ -32,6 +32,7 @@ import {
   type RecordTypePicklists,
   type RtPicklistField
 } from './recordTypePicklistGate'
+import { API_VERSION } from '../../../../shared/apiVersion'
 
 export interface PrefetchIo {
   /** Connected/integration user Id on the TARGET org (getOrgUserId). */
@@ -248,11 +249,11 @@ export async function fetchKnownPbeIds(io: PrefetchIo): Promise<Set<string>> {
 }
 
 /**
- * The UI-API version the record-type picklist endpoint is called at. Pinned to
- * the same v66.0 the rest of the app uses (services/salesforce.ts API_VERSION);
- * kept local so the pure engine keeps its no-services import rule.
+ * The UI-API version the record-type picklist endpoint is called at — the
+ * app-wide API_VERSION (shared/apiVersion.ts; the pure engine imports shared, not
+ * services).
  */
-const UI_API_VERSION = '66.0'
+const UI_API_VERSION = API_VERSION
 
 /**
  * Refuse to fan out beyond this many record types for one object. Each record

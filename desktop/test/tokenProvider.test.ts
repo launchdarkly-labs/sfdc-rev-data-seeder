@@ -4,7 +4,7 @@
  * no sf CLI / no network / no electron. Per the standing rule we assert the
  * INJECTED fake's call counts — never that a real refresh callout ran.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, type Mock } from 'vitest'
 import { createTokenProvider, type ConnectionInput } from '../src/main/services/tokenProvider'
 import type { CliToken } from '../src/main/services/sfcli'
 import type { TokenSet } from '../src/main/services/tokenVault'
@@ -53,8 +53,8 @@ function fakeCli(): {
 
 function fakeVault(seed?: Partial<TokenSet>): {
   get: (id: string) => TokenSet | null
-  put: ReturnType<typeof vi.fn>
-  updateAccess: ReturnType<typeof vi.fn>
+  put: Mock<(id: string, t: { accessToken: string; refreshToken?: string | null; instanceUrl: string }) => void>
+  updateAccess: Mock<(id: string, at: string, url: string) => void>
   rows: Map<string, TokenSet>
 } {
   const rows = new Map<string, TokenSet>()

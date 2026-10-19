@@ -182,7 +182,8 @@ async function executeTemplateRun(deps: RunDeps, ctx: JobContext, p: PreparedTem
     resume: p.options.resume,
     targetStoredRole: target.role,
     sourceStoredRole: source?.role ?? null,
-    lockConflict: p.lockConflict
+    lockConflict: p.lockConflict,
+    prodOrgIdPrefix: store.getProdOrgIdPrefix()
   })
   store.templates.finishRun(runId, report.state === 'running' ? 'failed' : report.state, report)
   return report

@@ -288,7 +288,7 @@ describe('StepFields (5B.6)', () => {
     const user = userEvent.setup()
     renderFields()
     await screen.findByRole('heading', { name: 'Fields' })
-    await user.selectOptions(await screen.findByLabelText('Saved fields template'), '3')
+    await user.selectOptions(await screen.findByLabelText('Saved fields preset'), '3')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
     await screen.findByText('Applied template "opp-only".')
     await waitFor(() =>
@@ -306,7 +306,7 @@ describe('StepFields (5B.6)', () => {
     // Exclude Amount, then save the current selection as a template.
     await user.click(await screen.findByLabelText('Include Amount'))
     await waitFor(() => expect(excludedFor('Opportunity')).toContain('Amount'))
-    await user.type(screen.getByLabelText('Fields template name'), 'cpq-slim')
+    await user.type(screen.getByLabelText('Fields preset name'), 'cpq-slim')
     await user.click(screen.getByRole('button', { name: 'Save as' }))
     await screen.findByText('Saved template "cpq-slim".')
     expect(savedTemplates).toHaveLength(1)
@@ -317,7 +317,7 @@ describe('StepFields (5B.6)', () => {
     // Reset the exclusion, then apply the template back.
     await user.click(screen.getByRole('button', { name: 'Include all' }))
     await waitFor(() => expect(excludedFor('Opportunity')).toEqual([]))
-    await user.selectOptions(screen.getByLabelText('Saved fields template'), '1')
+    await user.selectOptions(screen.getByLabelText('Saved fields preset'), '1')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
     await screen.findByText('Applied template "cpq-slim".')
     await waitFor(() => expect(excludedFor('Opportunity')).toEqual(['Amount']))
@@ -341,7 +341,7 @@ describe('StepFields (5B.6)', () => {
     const user = userEvent.setup()
     renderFields()
     await screen.findByRole('heading', { name: 'Fields' })
-    await user.selectOptions(await screen.findByLabelText('Saved fields template'), '7')
+    await user.selectOptions(await screen.findByLabelText('Saved fields preset'), '7')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
     await screen.findByText(/exclusions for 1 out-of-scope object dropped/)
     await waitFor(() =>

@@ -33,9 +33,9 @@
  *    (`restoreVersionNumber`) over the current org version
  *    (effectiveRestoreVersion, AMS:675-680 — wrong-version-on-restore race).
  *    Disable always targets activeVersionNumber = 0.
- *  - The composite subrequest `url`s are PAYLOAD bytes (inside the POST body),
- *    so the `/services/data/v66.0/...` prefix is hardcoded exactly as the
- *    Apex string literals are — not derived from the app-wide API_VERSION.
+ *  - The composite subrequest `url`s are PAYLOAD bytes (inside the POST body);
+ *    the Apex hardcoded their `/services/data/vNN.N/...` prefix. Here they derive
+ *    from the shared API_VERSION (S64 P6) so the whole app moves together.
  *  - toolingQuery reads only the FIRST response page (no queryMore), exactly
  *    like the Apex helper — unresolved tail items degrade to the per-item
  *    fallback, same as Apex.
@@ -59,11 +59,12 @@
  * GuardedOrg.assertWritable: toggles only ever run against the TARGET org.
  */
 import type { AutomationItem } from '../../shared/types'
+import { TOOLING_API_PATH } from '../../shared/apiVersion'
 
 /** Apex COMPOSITE_MAX (AMS:523). */
 export const COMPOSITE_MAX = 25
 
-const TOOLING = '/services/data/v66.0/tooling'
+const TOOLING = TOOLING_API_PATH
 /** Apex TOOLING_QUERY (AMS:8). */
 const TOOLING_QUERY = `${TOOLING}/query/?q=`
 

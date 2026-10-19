@@ -1,0 +1,115 @@
+# RDS Desktop release — build the universal DMG for a tag and attach it to the
+# GitHub Release (S64 P6 skeleton; decision D4: ad-hoc today, Developer ID when
+# the signing secrets exist — no code change between the two).
+#
+# Identity is decided by the presence of the CSC_LINK secret:
+#   absent  → ad-hoc signed, NOT notarized (scripts/afterPack.cjs signs); the
+#             Release page must carry the macOS "Open Anyway" steps.
+#   present → electron-builder.release.yml: Developer ID Application + notarize,
+#             using APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID.
+#
+# The Release itself is created by the maintainer (`gh release create vX.Y.Z`);
+# this workflow uploads the DMG and its SHA-256 to that Release. Nothing here
+# touches a Salesforce org.
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to build and upload for (e.g. v0.4.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      # Mapped at job level so steps can test `env.CSC_LINK != ''` (the secrets
+      # context is not available in step `if` conditions). Empty when unset.
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Never let electron-builder pick up a stray certificate from the runner.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: desktop/.nvmrc
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - run: npm ci
+      # npm ≥ 11.19 withholds dependency install scripts until approved, which
+      # leaves electron without its binary and esbuild / better-sqlite3 without
+      # their prebuilds. Approve them when that npm is in play; older npm ran
+      # them during `npm ci` and the command does not exist there.
+      - name: Approve native install scripts (npm ≥ 11.19)
+        run: |
+          if npm install-scripts --help >/dev/null 2>&1; then
+            npm install-scripts approve electron esbuild better-sqlite3
+          fi
+          test -d node_modules/electron/dist || node node_modules/electron/install.js
+
+      # The same lanes as desktop-ci, so a tag never ships what CI would reject.
+      - run: npm run scan:secrets
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:store
+
+      - name: Version must match the tag
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          test "$PKG" = "$RELEASE_TAG" || { echo "package.json is $PKG but the tag is $RELEASE_TAG"; exit 1; }
+
+      # Ad-hoc identity: afterPack.cjs flips fuses and signs with the hardened runtime.
+      - name: Package (ad-hoc, not notarized)
+        if: env.CSC_LINK == ''
+        run: npm run package:dmg
+
+      # Developer ID identity: electron-builder imports CSC_LINK into a temporary
+      # keychain, signs with the entitlements from electron-builder.yml and
+      # notarizes with the APPLE_* credentials (electron-builder.release.yml).
+      - name: Package (Developer ID + notarize)
+        if: env.CSC_LINK != ''
+        run: |
+          npx electron-vite build
+          npx electron-rebuild -f -w better-sqlite3
+          npx electron-builder --mac --config electron-builder.release.yml
+
+      - name: Verify the bundle
+        run: |
+          APP="release/mac-universal/RDS Desktop.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --entitlements :- "$APP" | grep -q 'com.apple.security.cs.allow-jit'
+          lipo -archs "$APP/Contents/MacOS/RDS Desktop" | grep -q 'x86_64 arm64'
+          npx @electron/fuses read --app "$APP"
+          if [ -n "$CSC_LINK" ]; then spctl --assess --type execute --verbose=2 "$APP"; fi
+          shasum -a 256 release/*.dmg | tee release/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rds-desktop-dmg
+          path: |
+            desktop/release/*.dmg
+            desktop/release/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" release/*.dmg release/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"

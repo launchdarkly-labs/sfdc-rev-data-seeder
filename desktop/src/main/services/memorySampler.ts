@@ -18,9 +18,34 @@ export interface ProcessSample {
 export interface MemorySampler {
   /** Take a final sample, stop the timer, return the summary line (null if nothing was read). */
   stop(): string | null
+  /**
+   * S64 P5 (5.1): the same peaks as structured data, MB per label ('main',
+   * 'renderer', 'gpu', …) — what `deploy_runs.peak_memory` persists. Null when
+   * nothing was read. Call after `stop()` for the final sample to be included.
+   */
+  peaksMB(): Record<string, number> | null
 }
 
 const LABELS: Readonly<Record<string, string>> = { Browser: 'main', Tab: 'renderer' }
+
+/** Process type → the label the summary line and the persisted JSON both use. */
+export function processLabel(type: string): string {
+  return LABELS[type] ?? type.toLowerCase()
+}
+
+/** Peaks in KB by process type → MB by label, in the summary line's order. */
+export function peaksToMB(peaksKB: ReadonlyMap<string, number>): Record<string, number> | null {
+  if (peaksKB.size === 0) return null
+  const order = ['Browser', 'Tab', 'GPU']
+  const keys = [...peaksKB.keys()].sort((a, b) => {
+    const ia = order.indexOf(a)
+    const ib = order.indexOf(b)
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b)
+  })
+  const out: Record<string, number> = {}
+  for (const k of keys) out[processLabel(k)] = Math.round((peaksKB.get(k) ?? 0) / 1024)
+  return out
+}
 
 export function summarizePeaks(peaksKB: ReadonlyMap<string, number>): string | null {
   if (peaksKB.size === 0) return null
@@ -31,7 +56,7 @@ export function summarizePeaks(peaksKB: ReadonlyMap<string, number>): string | n
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b)
   })
   const parts = keys.map(
-    (k) => `${LABELS[k] ?? k.toLowerCase()} ${Math.round((peaksKB.get(k) ?? 0) / 1024)} MB`
+    (k) => `${processLabel(k)} ${Math.round((peaksKB.get(k) ?? 0) / 1024)} MB`
   )
   return `Peak memory during the run: ${parts.join(', ')}.`
 }
@@ -67,6 +92,9 @@ export function startMemorySampler(
       timers.clear(handle)
       sample()
       return summarizePeaks(peaks)
+    },
+    peaksMB() {
+      return peaksToMB(peaks)
     }
   }
 }

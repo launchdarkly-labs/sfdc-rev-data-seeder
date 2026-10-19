@@ -285,7 +285,7 @@ export function PostRefreshBuilder({ value, onChange, connectionId }: Props): Re
         </summary>
         <p className="muted">
           object → field → prefix or set, over the rows a WHERE fragment selects. Opt-in patches are unchecked on the run
-          form by default. Idempotent: rows already patched are left alone.
+          form by default. Re-running leaves rows already patched alone.
         </p>
         {value.automation.settingPatches.map((p, i) => (
           <PatchRow
@@ -412,7 +412,7 @@ function TriggerProbe({ connectionId }: { connectionId: string }): React.JSX.Ele
     <details className="tier-section">
       <summary>Probe a trigger (read-only) — what this org exposes for a status change</summary>
       <div className="row-inputs">
-        <input className="map-matchfield" aria-label="Trigger name to probe" placeholder="TriggerName" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="map-matchfield" aria-label="Trigger name to probe" placeholder="e.g. AccountTrigger" value={name} onChange={(e) => setName(e.target.value)} />
         <button className="btn btn-small" onClick={() => void probe()} disabled={busy || !name.trim()}>
           {busy ? 'Probing…' : 'Probe'}
         </button>
@@ -450,9 +450,9 @@ function PatchRow({ patch, onChange, onRemove }: { patch: SettingPatch; onChange
   }
   return (
     <div className="patch-row">
-      <input className="text-input" aria-label="Patch label" placeholder="label" value={patch.label} onChange={(e) => onChange({ ...patch, label: e.target.value })} />
-      <input className="map-matchfield" aria-label="Patch object" placeholder="Object__c" value={patch.object} onChange={(e) => onChange({ ...patch, object: e.target.value.trim() })} />
-      <input className="map-matchfield" aria-label="Patch field" placeholder="Field__c" value={patch.field} onChange={(e) => onChange({ ...patch, field: e.target.value.trim() })} />
+      <input className="text-input" aria-label="Patch label" placeholder="Label" value={patch.label} onChange={(e) => onChange({ ...patch, label: e.target.value })} />
+      <input className="map-matchfield" aria-label="Patch object" placeholder="e.g. Acme_Settings__c" value={patch.object} onChange={(e) => onChange({ ...patch, object: e.target.value.trim() })} />
+      <input className="map-matchfield" aria-label="Patch field" placeholder="e.g. Key__c" value={patch.field} onChange={(e) => onChange({ ...patch, field: e.target.value.trim() })} />
       <select
         className="map-strategy"
         aria-label="Patch transform"
@@ -467,11 +467,11 @@ function PatchRow({ patch, onChange, onRemove }: { patch: SettingPatch; onChange
       <input
         className="map-matchfield"
         aria-label="Patch value"
-        placeholder={kind === 'prefix' ? 'SBOFF_' : 'value or null'}
+        placeholder={kind === 'prefix' ? 'e.g. SBOFF_' : 'Value, or null to clear'}
         value={patch.transform.value == null ? '' : String(patch.transform.value)}
         onChange={(e) => setValue(e.target.value)}
       />
-      <input className="text-input" aria-label="Patch where" placeholder="where (optional, no WHERE keyword)" value={patch.where ?? ''} onChange={(e) => onChange({ ...patch, where: e.target.value || undefined })} />
+      <input className="text-input" aria-label="Patch where" placeholder="Where clause (optional, without WHERE)" value={patch.where ?? ''} onChange={(e) => onChange({ ...patch, where: e.target.value || undefined })} />
       <label className="master-toggle">
         <input type="checkbox" checked={patch.optIn === true} onChange={(e) => onChange({ ...patch, optIn: e.target.checked || undefined })} /> opt-in
       </label>

@@ -1,0 +1,18 @@
+# Developer ID + notarized build. Everything else (files, fuses, universal target,
+# entitlements) comes from electron-builder.yml; this overlay only changes WHO signs.
+#
+#   npx electron-builder --mac --config electron-builder.release.yml
+#
+# Requires, in the environment (see .github/workflows/release.yml):
+#   CSC_LINK                    base64 (or file: URL) of the Developer ID Application .p12
+#   CSC_KEY_PASSWORD            its password
+#   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID   for notarization
+# With CSC_LINK set, scripts/afterPack.cjs flips the fuses only; electron-builder
+# signs every nested component with mac.hardenedRuntime + mac.entitlements from
+# the base file, then notarizes and staples.
+extends: ./electron-builder.yml
+mac:
+  # A name prefix: electron-builder resolves the matching certificate in the
+  # keychain CSC_LINK was imported into.
+  identity: Developer ID Application
+  notarize: true

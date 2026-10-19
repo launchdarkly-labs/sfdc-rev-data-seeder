@@ -122,6 +122,10 @@ describe('StepSummary (5B.7 — M1 exit)', () => {
     expect(screen.getByText('Contact')).toBeInTheDocument()
     expect(screen.getByText('415')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Re-analyze/ })).toBeInTheDocument()
+    // T-15: the gating column is called "Gating" (not "Tier") and the legend explains it.
+    expect(screen.getByRole('columnheader', { name: /Gating/ })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Tier' })).toBeNull()
+    expect(screen.getByText(/How the deploy engine paces this object/, { selector: '.legend' })).toBeInTheDocument()
   })
 
   it('runs analysis, then renders the plan when the job completes', async () => {
@@ -161,7 +165,7 @@ describe('StepSummary (5B.7 — M1 exit)', () => {
     installStub([PLAN], ['Account'])
     renderSummary()
     expect(await screen.findByText(/Scope changed since the last analysis/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Next: plan visualizer/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Next: Plan/ })).toBeDisabled()
   })
 
   it('shows an inline error when the analysis job fails', async () => {

@@ -678,8 +678,12 @@ export async function processPage(
     `${objectName} v2 strategy: REST (${page.totalSize} records` +
     (droppedCount > 0 ? `, ${droppedCount} fields dropped (not writable on target)` : '') +
     ')'
+  // S64 P5 (5.5): the dropped-field list used to ride on EVERY page's strategy
+  // line as up to 32 KB of `detail` (the Apex Long Text cap), structured-cloned
+  // to the renderer, which discards it. The full list lives in the frozen plan
+  // (`droppedFields`); the log line keeps a short head so the event stays small.
   const droppedDetail =
-    droppedCount === 0 ? null : leftTruncate(objPlan.droppedFields.join('\n'), 32760)
+    droppedCount === 0 ? null : leftTruncate(objPlan.droppedFields.join('\n'), DROPPED_DETAIL_MAX)
   log(io, runId, 'Info', strategyLog, droppedDetail)
 
   if (pendingPicklistLog != null) log(io, runId, 'Warning', pendingPicklistLog)
@@ -736,6 +740,9 @@ function groupTypedErrors(
   }
   return out
 }
+
+/** S64 P5 (5.5): cap on the strategy line's dropped-field `detail` (was 32,760 — the Apex Long Text cap). */
+const DROPPED_DETAIL_MAX = 2000
 
 function log(
   io: DeployIo,

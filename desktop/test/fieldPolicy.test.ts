@@ -86,6 +86,42 @@ describe('fieldExclusion — precedence + reasons', () => {
     })
   })
 
+  // S64 P5 (5.6c): the Fields step passes a precomputed Set of the object's
+  // explicit exclusions; it must give the same verdict as the array scan.
+  it('a precomputed excludedSet agrees with the array path for every field and precedence', () => {
+    const excluded = Array.from({ length: 300 }, (_, i) => `F${i}__c`)
+    const cfg = {
+      ...base,
+      excludedNamespaces: ['SBQQ'],
+      populatedOnly: true,
+      excludedFields: { Account: [...excluded, 'Amount', 'SBQQ__Foo__c', 'Unpop__c'] }
+    }
+    const populated = new Set(['Name', 'Amount', 'SBQQ__Foo__c', ...excluded])
+    const set: ReadonlySet<string> = new Set(cfg.excludedFields.Account)
+    const probes = ['Name', 'Amount', 'SBQQ__Foo__c', 'Unpop__c', 'F0__c', 'F299__c', 'Other__c']
+    for (const f of probes) {
+      expect(fieldExclusion(f, 'Account', cfg, populated, undefined, set)).toEqual(
+        fieldExclusion(f, 'Account', cfg, populated)
+      )
+    }
+    expect(fieldExclusion('Amount', 'Account', cfg, populated, undefined, set)).toEqual({
+      excluded: true,
+      reason: 'field'
+    })
+    expect(fieldExclusion('Name', 'Account', cfg, populated, undefined, set)).toEqual({
+      excluded: false
+    })
+    // The Set is authoritative when given: an entry only in the array is not seen —
+    // and vice versa — so callers must build it from the same config they pass.
+    expect(fieldExclusion('Amount', 'Account', cfg, populated, undefined, new Set())).toEqual({
+      excluded: false
+    })
+    // Another object's exclusions never leak through the Set path either.
+    expect(fieldExclusion('Amount', 'Contact', cfg, null, undefined, new Set())).toEqual({
+      excluded: false
+    })
+  })
+
   it('populated-only excludes a field absent from the sample (only when the set is loaded)', () => {
     const cfg = { ...base, populatedOnly: true }
     expect(fieldExclusion('Amount', 'Account', cfg, new Set(['Name']))).toEqual({

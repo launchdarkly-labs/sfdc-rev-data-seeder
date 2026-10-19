@@ -115,6 +115,13 @@ interface SeedRef {
   missing: boolean
 }
 
+/** First sentence + the rest (ux T-16). Exported for the test that pins the caveat's two halves. */
+export function splitLead(text: string): [string, string] {
+  const m = /^(.*?[.!?])\s+(\S[\s\S]*)$/.exec(text)
+  return m ? [m[1]!, m[2]!] : [text, '']
+}
+const [caveatLead, caveatMore] = splitLead(DRY_RUN_CAVEAT)
+
 function seedRefsFor(t: TemplateDetail, all: ReadonlyArray<TemplateSummary>): SeedRef[] {
   const seeds = all.filter((s) => s.kind === 'seed')
   if (t.kind === 'seed') {
@@ -292,7 +299,7 @@ function RunForm({
           </select>
           {targets.length === 0 && (
             <span className="muted">
-              No target orgs — give a sandbox the Target role on <Link to="/connections">Org Connections</Link>.
+              No target orgs — give a sandbox the Target role on <Link to="/connections">Connections</Link>.
             </span>
           )}
         </label>
@@ -424,9 +431,16 @@ function RunForm({
           </fieldset>
         )}
 
-        <p className="muted dry-run-caveat" data-testid="dry-run-caveat">
-          {DRY_RUN_CAVEAT}
-        </p>
+        {/* T-16: the first sentence leads; the rest sits behind a disclosure. The confirm shows the full text. */}
+        <div className="muted dry-run-caveat" data-testid="dry-run-caveat">
+          {caveatLead}
+          {caveatMore && (
+            <details className="learn-more">
+              <summary>Learn more</summary>
+              <p>{caveatMore}</p>
+            </details>
+          )}
+        </div>
 
         <div className="toolbar">
           <button className="btn primary" onClick={() => void start('dry-run')} disabled={!canStart || starting != null}>

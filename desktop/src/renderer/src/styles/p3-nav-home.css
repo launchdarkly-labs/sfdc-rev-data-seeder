@@ -1,0 +1,179 @@
+/* S64 P3 — p3-nav-home. Uses the tokens declared in ../app.css only; no new colours or sizes. */
+
+/* ── Sidebar footer: Idle text / running-jobs popover (ux IA-14, F-11) ──── */
+.sidebar-footer {
+  position: relative;
+}
+.jobs-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+.jobs-dot {
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 var(--space-1) var(--accent-tint);
+}
+.jobs-popover {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + var(--space-1));
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2);
+  z-index: var(--z-modal);
+  font-size: var(--fs-sm);
+}
+.jobs-popover-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.jobs-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.jobs-popover-row:hover {
+  background: var(--bg-subtle);
+}
+.jobs-popover-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-popover-text .muted {
+  font-size: var(--fs-xs);
+}
+
+/* ── Deployments page: one activity list (ux IA-10, IA-13, C-5, C-8) ───── */
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.card-phase {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.card-note {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.card-actions .btn {
+  text-decoration: none;
+}
+
+/* "…" overflow menu — a <details>, so it needs no JS and closes on blur via the summary. */
+.card-menu {
+  position: relative;
+  display: inline-block;
+}
+.card-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  line-height: 1;
+}
+.card-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.card-menu-list {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  min-width: 160px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  z-index: var(--z-modal);
+}
+.card-menu-list > a,
+.card-menu-list > button {
+  all: unset;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.card-menu-list > a:hover,
+.card-menu-list > button:hover,
+.card-menu-list > a:focus-visible,
+.card-menu-list > button:focus-visible {
+  background: var(--bg-subtle);
+}
+.card-menu-list > a:focus-visible,
+.card-menu-list > button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.card-menu-list > .menu-danger {
+  color: var(--red);
+}
+.card-menu-list > button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Error text: one line collapsed, full text on demand (ux T-12). */
+.error-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--red);
+  min-width: 0;
+}
+.error-line > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.error-line.expanded > span {
+  white-space: pre-wrap;
+  overflow: visible;
+  word-break: break-word;
+}
+.error-toggle {
+  flex: none;
+  padding: 0 var(--space-2);
+  font-size: var(--fs-xs);
+}
+
+/* ── Templates table: Run/Edit + overflow, relative last-run time (ux C-8, T-11) ── */
+.template-actions {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.last-run-when {
+  font-size: var(--fs-sm);
+}

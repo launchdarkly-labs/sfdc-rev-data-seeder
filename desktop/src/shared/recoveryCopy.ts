@@ -50,13 +50,13 @@ export const INTERRUPTED_BEFORE_RUN_MESSAGE =
   'Interrupted before the run started (the app was closed during connect / gates / plan freeze). ' +
   'Nothing was changed on the target org — deploy again from the Plan step.'
 
-/** Where per-record failures live until the run-log pane ships (5C.1). */
+/** S64 (P2): where per-record failures can be read — the table below and the JSON export, not a database table name. */
 export const RUN_LOG_POINTER =
-  'per-record failures are recorded in the app database (failed_records / record_results) until the run-log pane ships (5C.1).'
+  'the Deployment page shows failures per object and "Export failure list" saves every failed row with its reason as JSON.'
 
 /** What a Stalled deployment can do next (until the E2 recovery slice). */
 export const STALLED_NEXT_STEP =
-  'This deployment cannot be re-deployed until the recovery slice ships. After restoring the target’s automation manually, create a NEW deployment for the next attempt.'
+  'This deployment cannot be re-deployed. After restoring the target’s automation manually, create a new deployment for the next attempt.'
 
 /** The post-run CPQ reminder (mirrors the How To page's CPQ section). */
 export const CPQ_UNCHECK_REMINDER =
@@ -78,7 +78,7 @@ export const EXT_ID_REFUSAL_MARKER = 'has no usable Data_Deployment_External_Id_
  * during a run. Shared by the job log line and the deployment-page banner.
  */
 export const AUTOMATION_BORN_GUIDANCE =
-  'These rows carry no RDS key, so a re-run will neither update nor remove them — they are the ' +
+  'These rows carry no External Id from this app, so a re-run will neither update nor remove them — they are the ' +
   '“two of every product” shape. Before the next run into this org, confirm CPQ “Triggers ' +
   'Disabled” is checked (Installed Packages → Salesforce CPQ → Configure → Additional Settings) ' +
   'and review the automation the run left enabled; delete the listed rows by hand if they are ' +

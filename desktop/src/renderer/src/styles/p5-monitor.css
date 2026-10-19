@@ -1,0 +1,55 @@
+/*
+ * S64 P5 — the Deployment page's per-phase duration strip (plan 5.1) and its
+ * peak-memory line. Tokens only: colours, type sizes, spacing and radii come
+ * from app.css `:root`, so the strip follows the theme toggle for free.
+ */
+
+.phase-strip {
+  margin: var(--space-4) 0 var(--space-5);
+}
+
+.phase-strip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.phase-strip-seg {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  box-shadow: var(--shadow-1);
+}
+
+.phase-strip-seg.current {
+  border-color: var(--accent);
+  background: var(--accent-tint-soft);
+}
+
+.phase-strip-name {
+  color: var(--text);
+}
+
+.phase-strip-time {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.phase-strip-seg.current .phase-strip-time {
+  color: var(--accent);
+}
+
+.phase-strip-memory {
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-sm);
+}

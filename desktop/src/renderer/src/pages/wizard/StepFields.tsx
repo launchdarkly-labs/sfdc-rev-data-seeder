@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { isKeyless } from '../../../../shared/wizard'
+import { memo, useCallback, useMemo, useState } from 'react'
+import { nextLabel, isKeyless } from '../../../../shared/wizard'
 import {
   fieldExclusion,
   fieldNamespace,
@@ -7,16 +7,19 @@ import {
   isFieldLocked,
   reconcileFieldsTemplate,
   suggestExcludedNamespaces,
+  type FieldExclusion,
   type FieldsTemplatePayload
 } from '../../../../shared/fieldPolicy'
 import type { Template, TemplateKind } from '../../../../shared/types'
-import type { MappingStrategy } from '../../../../shared/wizard'
+import type { FieldMapping } from '../../../../shared/wizard'
 import { targetKeyProbeCandidates, type TargetKeyInfo } from '../../../../shared/mappingPolicy'
 import { useIpcQuery } from '../../ipc/hooks'
 import { callIpc, toRdsError } from '../../ipc/client'
 import { useWizard } from './WizardShell'
 import { useTargetKeys } from './useTargetKeys'
+import type { DescribeCache } from './describeCache'
 import { OutcomeNote, errNote, okNote, type Note } from '../../ui/OutcomeNote'
+import { Loading } from '../../ui/Loading'
 
 const FIELDS_KIND: TemplateKind = 'fields'
 
@@ -28,42 +31,57 @@ interface DeployableField {
   refTo: string | null
 }
 
-/** Describe both orgs (cached) and return each object's deployable (source∩target) fields. */
+/** Describe both orgs (through the shell's describe cache — S64 P5, 5.6a) and return
+ *  each object's deployable (source∩target) fields. S64 P5 (5.6b): every object's
+ *  pair is requested at once (`Promise.all`), not one object at a time; `onProgress`
+ *  still fires as each object's pair resolves (ux F-10: the step used to say
+ *  "Loading fields…" for the whole scope with no sign of how far it had got). */
 async function loadAllDeployableFields(
+  describe: DescribeCache['describe'],
   sourceConnectionId: string,
   targetConnectionId: string,
-  objects: string[]
+  objects: string[],
+  onProgress?: (done: number, total: number) => void
 ): Promise<Record<string, DeployableField[]>> {
+  const total = objects.length
+  let done = 0
+  const entries = await Promise.all(
+    objects.map(async (obj): Promise<readonly [string, DeployableField[]]> => {
+      const [src, tgt] = await Promise.all([
+        describe(sourceConnectionId, obj),
+        describe(targetConnectionId, obj)
+      ])
+      // Intersect source-deployable ∩ target-DEPLOYABLE (not just name-present): a field
+      // writable on source but read-only/formula/auto-number on the target must be
+      // dropped, else the upsert fails for every record (SchemaService.cls:294-298).
+      const targetDeployable = new Set(tgt.filter(isDeployableField).map((f) => f.apiName))
+      const fields = src
+        .filter(isDeployableField)
+        .filter((f) => targetDeployable.has(f.apiName))
+        .map((f) => ({
+          apiName: f.apiName,
+          label: f.label || f.apiName,
+          namespace: fieldNamespace(f.apiName),
+          refTo: f.isReference && f.referenceTo.length > 0 ? (f.referenceTo[0] ?? null) : null
+        }))
+      done += 1
+      onProgress?.(done, total)
+      return [obj, fields] as const
+    })
+  )
   const result: Record<string, DeployableField[]> = {}
-  for (const obj of objects) {
-    const [src, tgt] = await Promise.all([
-      callIpc(() => window.rds.describeObject(sourceConnectionId, obj)),
-      callIpc(() => window.rds.describeObject(targetConnectionId, obj))
-    ])
-    // Intersect source-deployable ∩ target-DEPLOYABLE (not just name-present): a field
-    // writable on source but read-only/formula/auto-number on the target must be
-    // dropped, else the upsert fails for every record (SchemaService.cls:294-298).
-    const targetDeployable = new Set(tgt.filter(isDeployableField).map((f) => f.apiName))
-    result[obj] = src
-      .filter(isDeployableField)
-      .filter((f) => targetDeployable.has(f.apiName))
-      .map((f) => ({
-        apiName: f.apiName,
-        label: f.label || f.apiName,
-        namespace: fieldNamespace(f.apiName),
-        refTo: f.isReference && f.referenceTo.length > 0 ? (f.referenceTo[0] ?? null) : null
-      }))
-  }
+  for (const [obj, fields] of entries) result[obj] = fields
   return result
 }
 
 /** Probe which fields are non-blank in a source sample per object (fail-open → all populated). */
 async function loadPopulated(
+  describe: DescribeCache['describe'],
   sourceConnectionId: string,
   targetConnectionId: string,
   objects: string[]
 ): Promise<Record<string, string[]>> {
-  const byObject = await loadAllDeployableFields(sourceConnectionId, targetConnectionId, objects)
+  const byObject = await loadAllDeployableFields(describe, sourceConnectionId, targetConnectionId, objects)
   const out: Record<string, string[]> = {}
   for (const [obj, fields] of Object.entries(byObject)) {
     const names = fields.map((f) => f.apiName)
@@ -76,6 +94,23 @@ async function loadPopulated(
   }
   return out
 }
+
+/** `excludedFields` with `obj` set to `names`. An empty list DELETES the key — a
+ *  stored `obj: []` excludes nothing and would only pollute templates/drop-counts. */
+function withExcludedFields(
+  excludedFields: Record<string, string[]>,
+  obj: string,
+  names: string[]
+): Record<string, string[]> {
+  const next = { ...excludedFields }
+  if (names.length === 0) delete next[obj]
+  else next[obj] = names
+  return next
+}
+
+// Stable empties so a memoised section doesn't re-render for a fresh `[]`.
+const EMPTY_FIELDS: readonly DeployableField[] = []
+const EMPTY_NAMES: readonly string[] = []
 
 /**
  * Wizard Step 5 — Fields. Per-object include/exclude over the deployable
@@ -90,13 +125,17 @@ async function loadPopulated(
  * re-validation via `reconcileFieldsTemplate`) and out-of-scope-ref locks (a
  * ref field whose mapping is policy-locked to Skip is stripped by the
  * transform regardless of selection, so its include checkbox is locked too).
+ *
+ * S64 P5 (5.6b): each object renders through a memoised `FieldsObjectSection`
+ * that owns its expand/search state and memoises its exclusion verdicts, so a
+ * keystroke in one object's search (or a checkbox) never re-evaluates every
+ * field of every other object.
  */
 export function StepFields(): React.JSX.Element {
-  const { config, updateConfig, goToStep, sourceConnectionId, targetConnectionId } = useWizard()
+  const { config, updateConfig, goToStep, sourceConnectionId, targetConnectionId, describe } =
+    useWizard()
   const objects = config.selectedObjects
   const scopeKey = objects.join(',')
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [search, setSearch] = useState<Record<string, string>>({})
 
   // ── Fields templates (5B.6-b) ──
   const templates = useIpcQuery(() => window.rds.templateList(FIELDS_KIND), [])
@@ -192,8 +231,17 @@ export function StepFields(): React.JSX.Element {
     }
   }
 
+  // Progress is written from inside the fetcher (after each await), never from an effect.
+  const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null)
   const scan = useIpcQuery(
-    () => loadAllDeployableFields(sourceConnectionId, targetConnectionId, objects),
+    () =>
+      loadAllDeployableFields(
+        describe,
+        sourceConnectionId,
+        targetConnectionId,
+        objects,
+        (done, total) => setScanProgress({ done, total })
+      ),
     [sourceConnectionId, targetConnectionId, scopeKey]
   )
 
@@ -217,7 +265,7 @@ export function StepFields(): React.JSX.Element {
   const populated = useIpcQuery(
     () =>
       config.populatedOnly
-        ? loadPopulated(sourceConnectionId, targetConnectionId, objects)
+        ? loadPopulated(describe, sourceConnectionId, targetConnectionId, objects)
         : Promise.resolve<Record<string, string[]>>({}),
     [config.populatedOnly, sourceConnectionId, targetConnectionId, scopeKey]
   )
@@ -230,23 +278,29 @@ export function StepFields(): React.JSX.Element {
     return [...set].sort()
   }, [scan.data])
 
-  const toggle = (obj: string): void => setExpanded((e) => ({ ...e, [obj]: !e[obj] }))
+  // Both callbacks use the UPDATER form of updateConfig: they read the freshest
+  // excludedFields (the shell's latest-value ref) and stay referentially stable,
+  // which is what lets FieldsObjectSection be memoised.
+  const setExcludedFields = useCallback(
+    (obj: string, names: string[]): void => {
+      updateConfig((prev) => ({ excludedFields: withExcludedFields(prev.excludedFields, obj, names) }))
+    },
+    [updateConfig]
+  )
 
-  const setExcludedFields = (obj: string, names: string[]): void => {
-    // An empty list DELETES the key — a stored `obj: []` excludes nothing and
-    // would only pollute templates/drop-counts.
-    const next = { ...config.excludedFields }
-    if (names.length === 0) delete next[obj]
-    else next[obj] = names
-    updateConfig({ excludedFields: next })
-  }
-
-  const toggleField = (obj: string, field: string, locked: boolean): void => {
-    if (locked) return // double-defense: a namespace/unpopulated lock is not user-toggleable
-    const current = config.excludedFields[obj] ?? []
-    const next = current.includes(field) ? current.filter((f) => f !== field) : [...current, field]
-    setExcludedFields(obj, next)
-  }
+  const toggleField = useCallback(
+    (obj: string, field: string, locked: boolean): void => {
+      if (locked) return // double-defense: a namespace/unpopulated lock is not user-toggleable
+      updateConfig((prev) => {
+        const current = prev.excludedFields[obj] ?? []
+        const names = current.includes(field)
+          ? current.filter((f) => f !== field)
+          : [...current, field]
+        return { excludedFields: withExcludedFields(prev.excludedFields, obj, names) }
+      })
+    },
+    [updateConfig]
+  )
 
   const toggleNamespace = (ns: string): void => {
     const current = config.excludedNamespaces
@@ -260,14 +314,11 @@ export function StepFields(): React.JSX.Element {
 
   // Degrade OPEN: only apply the populated gate once the probe has SUCCESSFULLY
   // loaded for this toggle. While loading or errored (data may be a stale {} from
-  // when the toggle was off — the hook keeps the last value on error), return null
-  // so fieldExclusion excludes nothing — never a fail-closed "all fields excluded".
-  const populatedSet = (obj: string): ReadonlySet<string> | null => {
-    if (!config.populatedOnly || populated.loading || populated.error || !populated.data) {
-      return null
-    }
-    return new Set(populated.data[obj] ?? [])
-  }
+  // when the toggle was off — the hook keeps the last value on error), the
+  // sections get null so fieldExclusion excludes nothing — never a fail-closed
+  // "all fields excluded".
+  const populatedReady =
+    config.populatedOnly && !populated.loading && !populated.error && !!populated.data
 
   return (
     <>
@@ -277,7 +328,15 @@ export function StepFields(): React.JSX.Element {
         exclude individual fields, whole managed namespaces, or unpopulated fields.
       </p>
 
-      {scan.loading && <p className="muted">Loading fields…</p>}
+      {scan.loading && (
+        <Loading
+          label={
+            scanProgress && scanProgress.total > 1
+              ? `Loading fields — ${scanProgress.done} / ${scanProgress.total} objects…`
+              : 'Loading fields…'
+          }
+        />
+      )}
       {scan.error && (
         <div className="banner">
           {scan.error.message}{' '}
@@ -307,14 +366,14 @@ export function StepFields(): React.JSX.Element {
 
           <div className="toolbar">
             <select
-              className="map-strategy"
-              aria-label="Saved fields template"
+              className="select"
+              aria-label="Saved fields preset"
               value={selectedTemplateId === '' ? '' : String(selectedTemplateId)}
               onChange={(e) =>
                 setSelectedTemplateId(e.target.value === '' ? '' : Number(e.target.value))
               }
             >
-              <option value="">— saved templates —</option>
+              <option value="">— saved presets —</option>
               {templates.data?.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -343,9 +402,9 @@ export function StepFields(): React.JSX.Element {
               Delete
             </button>
             <input
-              className="map-matchfield"
-              aria-label="Fields template name"
-              placeholder="template name"
+              className="input-sm"
+              aria-label="Fields preset name"
+              placeholder="preset name"
               value={templateName}
               onChange={(e) => setTemplateName(e.target.value)}
             />
@@ -363,7 +422,7 @@ export function StepFields(): React.JSX.Element {
             <p className="footprint">
               Exclude namespaces:{' '}
               {namespaces.map((ns) => (
-                <label key={ns} className="map-detail" style={{ marginRight: 10 }}>
+                <label key={ns} className="map-detail mr-3">
                   <input
                     type="checkbox"
                     aria-label={`Exclude namespace ${ns}`}
@@ -376,133 +435,25 @@ export function StepFields(): React.JSX.Element {
             </p>
           )}
           {config.populatedOnly && populated.loading && (
-            <p className="muted">Sampling populated fields…</p>
+            <Loading label="Sampling populated fields…" />
           )}
 
-          {objects.map((obj) => {
-            const fields = scan.data?.[obj] ?? []
-            const q = (search[obj] ?? '').toLowerCase()
-            const shown = q
-              ? fields.filter(
-                  (f) => f.apiName.toLowerCase().includes(q) || f.label.toLowerCase().includes(q)
-                )
-              : fields
-            const popSet = populatedSet(obj)
-            const refCtx = (
-              f: DeployableField
-            ): {
-              refTo: string | null
-              selectedObjects: string[]
-              overrideStrategy?: MappingStrategy
-              targetKeys?: TargetKeyInfo
-            } => ({
-              refTo: f.refTo,
-              selectedObjects: objects,
-              // A user-chosen 'skip' on the Mappings step strips the field too.
-              overrideStrategy: config.mappings[obj]?.[f.apiName]?.strategy,
-              targetKeys
-            })
-            const includedCount = fields.filter(
-              (f) => !fieldExclusion(f.apiName, obj, config, popSet, refCtx(f)).excluded
-            ).length
-            return (
-              <div key={obj} className="map-object">
-                <button
-                  className="map-object-hdr btn"
-                  aria-expanded={!!expanded[obj]}
-                  onClick={() => toggle(obj)}
-                >
-                  {expanded[obj] ? '▾' : '▸'} {obj}{' '}
-                  <span className="muted">
-                    ({includedCount}/{fields.length} included)
-                  </span>
-                </button>
-                {expanded[obj] && (
-                  <div>
-                    <div className="toolbar">
-                      <input
-                        className="map-matchfield"
-                        aria-label={`Search fields in ${obj}`}
-                        placeholder="search fields"
-                        value={search[obj] ?? ''}
-                        onChange={(e) => setSearch((s) => ({ ...s, [obj]: e.target.value }))}
-                      />
-                      <button className="btn" onClick={() => setExcludedFields(obj, [])}>
-                        Include all
-                      </button>
-                      <button
-                        className="btn"
-                        onClick={() =>
-                          // EVERY deployable field goes into the explicit list — an entry on
-                          // a currently-locked field is inert while locked (derived reasons
-                          // win) but preserves the user's exclude-all intent if the lock
-                          // later lifts (namespace un-excluded, ref back in scope).
-                          setExcludedFields(
-                            obj,
-                            fields.map((f) => f.apiName)
-                          )
-                        }
-                      >
-                        Exclude all
-                      </button>
-                    </div>
-                    <table className="orgs">
-                      <thead>
-                        <tr>
-                          <th>Include</th>
-                          <th>Field</th>
-                          <th>Namespace</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {shown.map((f) => {
-                          const ex = fieldExclusion(f.apiName, obj, config, popSet, refCtx(f))
-                          const locked = isFieldLocked(ex.reason)
-                          return (
-                            <tr key={f.apiName}>
-                              <td>
-                                <input
-                                  type="checkbox"
-                                  aria-label={`Include ${f.apiName}`}
-                                  checked={!ex.excluded}
-                                  disabled={locked}
-                                  onChange={() => toggleField(obj, f.apiName, locked)}
-                                />
-                              </td>
-                              <td>
-                                {f.label}
-                                <br />
-                                <span className="muted">{f.apiName}</span>
-                                {ex.reason === 'namespace' && (
-                                  <span className="status-warn"> · namespace excluded</span>
-                                )}
-                                {ex.reason === 'unpopulated' && (
-                                  <span className="status-warn"> · not populated</span>
-                                )}
-                                {ex.reason === 'skippedRef' &&
-                                  (config.mappings[obj]?.[f.apiName]?.strategy === 'skip' ? (
-                                    <span className="status-warn">
-                                      {' '}
-                                      · skipped by your mapping (change on the Mappings step)
-                                    </span>
-                                  ) : (
-                                    <span className="status-warn">
-                                      {' '}
-                                      · ref → {f.refTo} out of scope (skipped by mapping)
-                                    </span>
-                                  ))}
-                              </td>
-                              <td>{f.namespace ?? <span className="muted">—</span>}</td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )
-          })}
+          {objects.map((obj) => (
+            <FieldsObjectSection
+              key={obj}
+              objectName={obj}
+              fields={scan.data?.[obj] ?? EMPTY_FIELDS}
+              selectedObjects={objects}
+              excluded={config.excludedFields[obj]}
+              excludedNamespaces={config.excludedNamespaces}
+              populatedOnly={config.populatedOnly}
+              populatedNames={populatedReady ? (populated.data?.[obj] ?? EMPTY_NAMES) : null}
+              mappings={config.mappings[obj]}
+              targetKeys={targetKeys}
+              onSetExcluded={setExcludedFields}
+              onToggleField={toggleField}
+            />
+          ))}
         </>
       )}
 
@@ -513,11 +464,213 @@ export function StepFields(): React.JSX.Element {
         <button className="btn" disabled={templateBusy} onClick={() => goToStep('mappings')}>
           Back
         </button>
-        <button className="btn primary" disabled={templateBusy} onClick={() => goToStep('summary')}>
-          Next: summary
+        <button className="btn primary" disabled={templateBusy} onClick={() => goToStep('templates')}>
+          {nextLabel('templates')}
         </button>
         {templateBusy && <span className="muted">Finishing the current action…</span>}
       </div>
     </>
   )
 }
+
+interface FieldsObjectSectionProps {
+  objectName: string
+  fields: readonly DeployableField[]
+  selectedObjects: string[]
+  /** `config.excludedFields[objectName]` — undefined when nothing is excluded. */
+  excluded: string[] | undefined
+  excludedNamespaces: string[]
+  populatedOnly: boolean
+  /** Populated field names once the probe has loaded for this toggle; null = gate inactive. */
+  populatedNames: readonly string[] | null
+  /** `config.mappings[objectName]` — a user-chosen 'skip' strips the field too. */
+  mappings: Record<string, FieldMapping> | undefined
+  targetKeys: TargetKeyInfo
+  onSetExcluded: (obj: string, names: string[]) => void
+  onToggleField: (obj: string, field: string, locked: boolean) => void
+}
+
+type FieldPolicySlice = Parameters<typeof fieldExclusion>[2]
+
+/**
+ * One object's include/exclude section (S64 P5, 5.6b). Owns its expand + search
+ * state (keyed on the object by the parent, so it resets when the object leaves
+ * the scope) and memoises the per-field exclusion verdicts on the policy inputs
+ * they actually read — a search keystroke only re-filters the shown rows.
+ * Memoised: the parent's callbacks are stable and every other prop is a
+ * primitive or a config slice that only changes when THIS object's inputs do.
+ */
+const FieldsObjectSection = memo(function FieldsObjectSection(
+  props: FieldsObjectSectionProps
+): React.JSX.Element {
+  const {
+    objectName,
+    fields,
+    selectedObjects,
+    excluded,
+    excludedNamespaces,
+    populatedOnly,
+    populatedNames,
+    mappings,
+    targetKeys,
+    onSetExcluded,
+    onToggleField
+  } = props
+  const [expanded, setExpanded] = useState(false)
+  const [search, setSearch] = useState('')
+
+  // 5.6c: the explicit-exclusion Set, built once per object per change — the
+  // O(1) lookup fieldExclusion uses instead of scanning the array per field.
+  const excludedSet = useMemo<ReadonlySet<string>>(() => new Set(excluded ?? []), [excluded])
+  const popSet = useMemo<ReadonlySet<string> | null>(
+    () => (populatedNames ? new Set(populatedNames) : null),
+    [populatedNames]
+  )
+  const policy = useMemo<FieldPolicySlice>(
+    () => ({
+      excludedFields: excluded ? { [objectName]: excluded } : {},
+      excludedNamespaces,
+      populatedOnly
+    }),
+    [excluded, objectName, excludedNamespaces, populatedOnly]
+  )
+
+  // The verdict for EVERY field (the header count needs all of them, expanded or
+  // not), keyed on the policy inputs only.
+  const exclusions = useMemo(() => {
+    const out = new Map<string, FieldExclusion>()
+    for (const f of fields) {
+      out.set(
+        f.apiName,
+        fieldExclusion(
+          f.apiName,
+          objectName,
+          policy,
+          popSet,
+          {
+            refTo: f.refTo,
+            selectedObjects,
+            // A user-chosen 'skip' on the Mappings step strips the field too.
+            overrideStrategy: mappings?.[f.apiName]?.strategy,
+            targetKeys
+          },
+          excludedSet
+        )
+      )
+    }
+    return out
+  }, [fields, objectName, policy, popSet, selectedObjects, mappings, targetKeys, excludedSet])
+
+  const includedCount = useMemo(() => {
+    let n = 0
+    for (const ex of exclusions.values()) if (!ex.excluded) n += 1
+    return n
+  }, [exclusions])
+
+  const shown = useMemo(() => {
+    const q = search.toLowerCase()
+    return q
+      ? fields.filter(
+          (f) => f.apiName.toLowerCase().includes(q) || f.label.toLowerCase().includes(q)
+        )
+      : fields
+  }, [fields, search])
+
+  return (
+    <div className="map-object">
+      <button
+        className="map-object-hdr btn"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {objectName}{' '}
+        <span className="muted">
+          ({includedCount}/{fields.length} included)
+        </span>
+      </button>
+      {expanded && (
+        <div>
+          <div className="toolbar">
+            <input
+              className="input-sm"
+              aria-label={`Search fields in ${objectName}`}
+              placeholder="search fields"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <button className="btn" onClick={() => onSetExcluded(objectName, [])}>
+              Include all
+            </button>
+            <button
+              className="btn"
+              onClick={() =>
+                // EVERY deployable field goes into the explicit list — an entry on
+                // a currently-locked field is inert while locked (derived reasons
+                // win) but preserves the user's exclude-all intent if the lock
+                // later lifts (namespace un-excluded, ref back in scope).
+                onSetExcluded(
+                  objectName,
+                  fields.map((f) => f.apiName)
+                )
+              }
+            >
+              Exclude all
+            </button>
+          </div>
+          <table className="table table--compact">
+            <thead>
+              <tr>
+                <th>Include</th>
+                <th>Field</th>
+                <th>Namespace</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((f) => {
+                const ex = exclusions.get(f.apiName) ?? { excluded: false }
+                const locked = isFieldLocked(ex.reason)
+                return (
+                  <tr key={f.apiName}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Include ${f.apiName}`}
+                        checked={!ex.excluded}
+                        disabled={locked}
+                        onChange={() => onToggleField(objectName, f.apiName, locked)}
+                      />
+                    </td>
+                    <td>
+                      {f.label}
+                      <br />
+                      <span className="muted">{f.apiName}</span>
+                      {ex.reason === 'namespace' && (
+                        <span className="status-warn"> · namespace excluded</span>
+                      )}
+                      {ex.reason === 'unpopulated' && (
+                        <span className="status-warn"> · not populated</span>
+                      )}
+                      {ex.reason === 'skippedRef' &&
+                        (mappings?.[f.apiName]?.strategy === 'skip' ? (
+                          <span className="status-warn">
+                            {' '}
+                            · skipped by your mapping (change on the Mappings step)
+                          </span>
+                        ) : (
+                          <span className="status-warn">
+                            {' '}
+                            · ref → {f.refTo} out of scope (skipped by mapping)
+                          </span>
+                        ))}
+                    </td>
+                    <td>{f.namespace ?? <span className="muted">—</span>}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+})

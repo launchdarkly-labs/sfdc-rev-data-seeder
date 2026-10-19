@@ -159,7 +159,10 @@ export function buildDeployRunState(
       cancelRequested: run.cancelRequested,
       teardownOutcome: run.teardownOutcome,
       startedAt: run.startedAt,
-      finishedAt: run.finishedAt
+      finishedAt: run.finishedAt,
+      // S64 P5 (5.1): per-phase stamps + the persisted memory peaks (migration 014).
+      phases: store.deploy.runPhases(run.id),
+      peakMemoryMB: store.deploy.runPeakMemory(run.id)
     },
     counters,
     objects,

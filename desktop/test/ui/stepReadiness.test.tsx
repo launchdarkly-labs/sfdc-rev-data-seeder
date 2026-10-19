@@ -227,14 +227,14 @@ describe('StepReadiness (5B.4)', () => {
   // ── S54 (L1): Readiness is a HARD STOP ─────────────────────────────────
   it('L1: a missing field is RED, blocks Next, and names the object in the stop message', async () => {
     renderReadiness() // Account ready, Contact missing, OCR junction
-    const missingCell = await screen.findByText('✗ missing External Id field')
+    const missingCell = await screen.findByText('missing External Id field')
     expect(missingCell).toHaveClass('status-err')
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent(/^You can't proceed/)
     expect(alert).toHaveTextContent('Contact')
-    expect(alert).toHaveTextContent(/Provision the External ID fields/)
+    expect(alert).toHaveTextContent(/Create the External Id fields/)
     expect(screen.queryByText(/You can continue/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Next: mappings' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Next: Mappings' })).toBeDisabled()
     // The step nav past Readiness is closed too.
     for (const label of ['Mappings', 'Fields', 'Summary', 'Plan']) {
       expect(screen.getByRole('button', { name: label })).toHaveAttribute('aria-disabled', 'true')
@@ -245,7 +245,7 @@ describe('StepReadiness (5B.4)', () => {
   it('L1: a closed nav step routes back to Readiness with the reason, never to the step', async () => {
     const user = userEvent.setup()
     renderReadiness()
-    await screen.findByText('✗ missing External Id field')
+    await screen.findByText('missing External Id field')
     await user.click(screen.getByRole('button', { name: 'Plan' }))
     expect(screen.getByRole('heading', { name: 'Readiness' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Plan' })).not.toBeInTheDocument()
@@ -253,7 +253,7 @@ describe('StepReadiness (5B.4)', () => {
 
   it('L1: the verdict is persisted on the draft keyed by scope (so Summary/Plan can read it)', async () => {
     renderReadiness()
-    await screen.findByText('✗ missing External Id field')
+    await screen.findByText('missing External Id field')
     await waitFor(() => expect(savedConfigs.length).toBeGreaterThan(0))
     const last = savedConfigs[savedConfigs.length - 1]!
     expect(last.readiness).toMatchObject({
@@ -268,7 +268,7 @@ describe('StepReadiness (5B.4)', () => {
     installWith([ready('Account'), ready('Opportunity'), junction('OpportunityContactRole')])
     renderReadiness()
     expect(await screen.findByText(/Target ready for this scope/)).toBeInTheDocument()
-    const next = screen.getByRole('button', { name: 'Next: mappings' })
+    const next = screen.getByRole('button', { name: 'Next: Mappings' })
     await waitFor(() => expect(next).toBeEnabled())
     await user.click(next)
     await waitFor(() =>
@@ -279,11 +279,11 @@ describe('StepReadiness (5B.4)', () => {
   it('L1: Provision flips the gate — Next is disabled before and enabled after', async () => {
     const user = userEvent.setup()
     renderReadiness()
-    await screen.findByText('✗ missing External Id field')
-    expect(screen.getByRole('button', { name: 'Next: mappings' })).toBeDisabled()
+    await screen.findByText('missing External Id field')
+    expect(screen.getByRole('button', { name: 'Next: Mappings' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: /Create 1 External Id field/ }))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Next: mappings' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Next: Mappings' })).toBeEnabled()
     )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -292,7 +292,7 @@ describe('StepReadiness (5B.4)', () => {
     installWith([ready('Account'), undescribable('SBQQ__Quote__c')])
     renderReadiness()
     await screen.findByText(/could not describe on target/)
-    expect(screen.getByRole('button', { name: 'Next: mappings' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Next: Mappings' })).toBeDisabled()
     expect(screen.getByRole('alert')).toHaveTextContent('SBQQ__Quote__c')
   })
 
@@ -310,6 +310,53 @@ describe('StepReadiness (5B.4)', () => {
     expect(await screen.findByText(/could not describe on target/)).toBeInTheDocument()
     // The healthy object is still assessed + shown.
     expect(screen.getByText(/External Id present/)).toBeInTheDocument()
+  })
+})
+
+// ── S64 P3: live provisioning rows, visible gate reason, one API name ─────────
+describe('StepReadiness — S64 P3 (F-2 live rows, F-8 gate note, T-2 copy)', () => {
+  it('shows "…" on each object being provisioned, then ticks it when the refetch returns', async () => {
+    const user = userEvent.setup()
+    installWith([ready('Account'), missing('Contact'), missing('Opportunity')])
+    let release: (() => void) | null = null
+    const rds = (window as unknown as { rds: Record<string, unknown> }).rds
+    const real = rds.readinessProvisionExtIds as (id: number) => Promise<unknown>
+    rds.readinessProvisionExtIds = async (id: number) => {
+      await new Promise<void>((res) => {
+        release = res
+      })
+      return real(id)
+    }
+    renderReadiness()
+    await screen.findByText('All External Id fields present', { exact: false }).catch(() => undefined)
+    await user.click(await screen.findByRole('button', { name: 'Create 2 External Id fields' }))
+    expect(await screen.findByTestId('provisioning-Contact')).toHaveTextContent('creating the field and granting access')
+    expect(screen.getByTestId('provisioning-Opportunity')).toBeInTheDocument()
+    expect(screen.queryByTestId('provisioning-Account')).toBeNull() // already ready — not in the batch
+    release!()
+    await waitFor(() => expect(screen.queryByTestId('provisioning-Contact')).toBeNull())
+    expect(screen.getAllByText('External Id present')).toHaveLength(3)
+  })
+
+  it('the disabled Next shows its reason as a visible line, and the API name appears once in code', async () => {
+    renderReadiness() // Contact missing → blocked
+    await screen.findByText('missing External Id field')
+    expect(screen.getByTestId('readiness-gate-note')).toHaveTextContent(/Next is disabled until every object above has a usable External Id field/)
+    const codes = Array.from(document.querySelectorAll('code')).filter((c) => c.textContent === 'Data_Deployment_External_Id__c')
+    expect(codes).toHaveLength(1)
+    // T-2: the gate message speaks of "the External Id field", not the raw API name.
+    expect(screen.getByRole('alert').textContent).not.toMatch(/Data_Deployment_External_Id__c/)
+    expect(screen.getByRole('alert')).toHaveTextContent(/no usable External Id field on the target/)
+  })
+
+  it('a provisioning failure is a disclosure with the full error, not a truncated title-only span', async () => {
+    const user = userEvent.setup()
+    installWith([missing('OpportunityTeamMember')])
+    provisionFailures = [{ objectName: 'OpportunityTeamMember', error: 'INVALID_FIELD: cannot add custom fields to this entity because the platform owns its shape' }]
+    renderReadiness()
+    await user.click(await screen.findByRole('button', { name: 'Create 1 External Id field' }))
+    const summary = await screen.findByText(/Could not create the field — show the error/)
+    expect(summary.closest('details')!.querySelector('pre')!.textContent).toContain('platform owns its shape')
   })
 })
 
@@ -334,7 +381,7 @@ describe('StepReadiness — S57 B4 cannot-host rows', () => {
     // Only Contact is creatable.
     expect(screen.getByRole('button', { name: 'Create 1 External Id field' })).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent(/provisioning will never fix it; deselect it to continue/)
-    expect(screen.getByRole('button', { name: 'Next: mappings' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Next: Mappings' })).toBeDisabled()
   })
 
   it('"Deselect" removes the object from the scope (and its filter/mappings) so the check re-runs', async () => {

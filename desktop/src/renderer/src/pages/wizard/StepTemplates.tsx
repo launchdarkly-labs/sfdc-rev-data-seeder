@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import type { PostRefreshTemplate, TemplateDetail, TemplateSummary } from '../../../../shared/templates/types'
-import {
-  TEMPLATE_STAGES_NOTE,
+import { nextLabel,
+  TEMPLATE_STAGES_NOTE_LEAD,
+  TEMPLATE_STAGES_NOTE_MORE,
   templateStepsOf,
   stageLabels,
   type TemplateStepRef,
@@ -86,8 +87,13 @@ export function StepTemplates(): React.JSX.Element {
         Optional. Run a saved post-refresh or data-seed template before the data lands in {targetLabel} (silence the org,
         load configuration) or after it. Every stage reads from {sourceLabel} and writes to {targetLabel}.
       </p>
-      <div className="banner warn" role="note">
-        {TEMPLATE_STAGES_NOTE}
+      {/* T-16: one-sentence lead; the rest behind a disclosure. */}
+      <div className="banner warn" role="note" data-testid="stages-note">
+        {TEMPLATE_STAGES_NOTE_LEAD}
+        <details className="learn-more">
+          <summary>Learn more</summary>
+          <p>{TEMPLATE_STAGES_NOTE_MORE}</p>
+        </details>
       </div>
 
       {all.loading && <p className="muted">Loading templates…</p>}
@@ -213,7 +219,7 @@ export function StepTemplates(): React.JSX.Element {
                         })}
                         {gated.length > 0 && (
                           <div className="muted">
-                            Needs the CPQ “Triggers Disabled” attestation on the Plan step ({gated.length} gated object
+                            Needs the CPQ “Triggers Disabled” confirmation on the Plan step ({gated.length} gated object
                             {gated.length === 1 ? '' : 's'}).
                           </div>
                         )}
@@ -232,11 +238,11 @@ export function StepTemplates(): React.JSX.Element {
       </p>
 
       <div className="toolbar">
-        <button className="btn" onClick={() => goToStep('orgs')}>
+        <button className="btn" onClick={() => goToStep('fields')}>
           Back
         </button>
-        <button className="btn primary" onClick={() => goToStep('objects')}>
-          Next: choose objects
+        <button className="btn primary" onClick={() => goToStep('summary')}>
+          {nextLabel('summary')}
         </button>
       </div>
     </>

@@ -8,6 +8,7 @@ import {
   readinessGateMessage,
   stepClosedByReadiness,
   stepIndex,
+  STEP_LABELS,
   type WizardConfig,
   type WizardStep, isKeyless, visibleWizardSteps } from '../../../../shared/wizard'
 import { useToast } from '../../ui/Toast'
@@ -20,6 +21,25 @@ import { StepMappings } from './StepMappings'
 import { StepFields } from './StepFields'
 import { StepSummary } from './StepSummary'
 import { StepPlan } from './StepPlan'
+import { createDescribeCache, type DescribeCache } from './describeCache'
+
+/**
+ * S64 P5 (5.6e): trailing debounce on config saves. Scope's filter box and
+ * Mappings' inputs call `updateConfig` per keystroke, and each save used to be a
+ * full-config IPC write. `goToStep` and unmount flush a pending save at once.
+ */
+export const DRAFT_SAVE_DEBOUNCE_MS = 500
+
+/** A partial config, or an updater that derives one from the FRESHEST config
+ *  (the latest-value ref, never a render snapshot) — lets a memoised child keep
+ *  a referentially stable callback without closing over `config`. */
+export type ConfigPatch = Partial<WizardConfig> | ((prev: WizardConfig) => Partial<WizardConfig>)
+
+interface PendingSave {
+  timer: ReturnType<typeof setTimeout>
+  step: WizardStep
+  config: WizardConfig
+}
 
 interface WizardContextValue {
   deploymentId: number
@@ -31,12 +51,17 @@ interface WizardContextValue {
   status: string
   step: WizardStep
   config: WizardConfig
-  /** Merge a partial config and persist (fire-and-forget with error toast). */
-  updateConfig: (patch: Partial<WizardConfig>) => void
-  /** Persist current config at `step` then navigate there. */
+  /** Merge a partial config (or an updater over the freshest config) and
+   *  persist — debounced, fire-and-forget with error toast. Referentially
+   *  stable for the life of the shell. */
+  updateConfig: (patch: ConfigPatch) => void
+  /** Flush any pending save, persist the current config at `step`, then navigate there. */
   goToStep: (step: WizardStep) => void
   /** Re-load the draft row (status/config) — e.g. after analysis flips Draft→Planned. */
   refreshDraft: () => void
+  /** S64 P5 (5.6a): describe an object on an org through the shell-scoped cache —
+   *  one IPC per connection+object for as long as this wizard stays mounted. */
+  describe: DescribeCache['describe']
 }
 
 const WizardContext = createContext<WizardContextValue | null>(null)
@@ -45,18 +70,6 @@ export function useWizard(): WizardContextValue {
   const ctx = useContext(WizardContext)
   if (!ctx) throw new Error('useWizard must be used inside <WizardShell>')
   return ctx
-}
-
-const STEP_LABELS: Record<WizardStep, string> = {
-  orgs: 'Orgs',
-  templates: 'Templates',
-  objects: 'Objects',
-  scope: 'Scope',
-  readiness: 'Readiness',
-  mappings: 'Mappings',
-  fields: 'Fields',
-  summary: 'Summary',
-  plan: 'Plan'
 }
 
 export function WizardShell(): React.JSX.Element {
@@ -78,6 +91,12 @@ export function WizardShell(): React.JSX.Element {
   // active when they land.
   const configRef = useRef<WizardConfig | null>(null)
   const activeStepRef = useRef<WizardStep>('orgs')
+
+  // 5.6a: one describe cache per mounted shell — leaving the wizard drops it.
+  const [describeCache] = useState(() => createDescribeCache())
+
+  // 5.6e: the one pending (debounced) config save, if any.
+  const pendingSaveRef = useRef<PendingSave | null>(null)
 
   // Reload the draft row. On the initial load it also seeds the editable config;
   // a later refresh (post-analysis) only updates the row (status), leaving the
@@ -127,6 +146,87 @@ export function WizardShell(): React.JSX.Element {
     if (resolvedStep) activeStepRef.current = resolvedStep
   }, [resolvedStep])
 
+  // ── Saves (5.6e) ──
+  const persistNow = useCallback(
+    (nextStep: WizardStep, nextConfig: WizardConfig): void => {
+      void window.rds
+        .draftSave({ deploymentId, step: nextStep, config: nextConfig })
+        .catch((e: unknown) =>
+          toast(e instanceof Error ? e.message : 'Failed to save draft', 'error')
+        )
+    },
+    [deploymentId, toast]
+  )
+
+  // Drop the pending save WITHOUT writing it. Only called right before a save of
+  // the freshest config (configRef), which supersedes whatever was pending.
+  const cancelPendingSave = useCallback((): void => {
+    const p = pendingSaveRef.current
+    if (!p) return
+    clearTimeout(p.timer)
+    pendingSaveRef.current = null
+  }, [])
+
+  const scheduleSave = useCallback(
+    (nextStep: WizardStep, nextConfig: WizardConfig): void => {
+      cancelPendingSave()
+      const timer = setTimeout(() => {
+        pendingSaveRef.current = null
+        persistNow(nextStep, nextConfig)
+      }, DRAFT_SAVE_DEBOUNCE_MS)
+      pendingSaveRef.current = { timer, step: nextStep, config: nextConfig }
+    },
+    [cancelPendingSave, persistNow]
+  )
+
+  // Unmount flushes a pending save, so leaving the wizard (or the app closing
+  // the route) never loses the last half-second of edits. `persistNow` only
+  // changes with the deployment id, in which case flushing the OLD draft's
+  // pending save through the old closure is exactly right.
+  useEffect(
+    () => () => {
+      const p = pendingSaveRef.current
+      if (!p) return
+      clearTimeout(p.timer)
+      pendingSaveRef.current = null
+      persistNow(p.step, p.config)
+    },
+    [persistNow]
+  )
+
+  const updateConfig = useCallback(
+    (patch: ConfigPatch): void => {
+      // Merge over the ref, not the render snapshot — see the ref docs above.
+      const prev = configRef.current!
+      const next = { ...prev, ...(typeof patch === 'function' ? patch(prev) : patch) }
+      configRef.current = next
+      setConfig(next)
+      scheduleSave(activeStepRef.current, next)
+    },
+    [scheduleSave]
+  )
+
+  const draftStatus = draft?.status
+  const goToStep = useCallback(
+    (target: WizardStep): void => {
+      const live = configRef.current
+      if (!draftStatus || !live) return
+      const clamped0 = clampStep(target, draftStatus)
+      const clamped = isKeyless(live) && clamped0 === 'readiness' ? 'mappings' : clamped0
+      // The gate is read from the LIVE config (a Readiness check that just
+      // persisted opens it in the same tick).
+      const liveGate = readinessGate(live)
+      const dest = liveGate.blocked && stepClosedByReadiness(clamped) ? 'readiness' : clamped
+      if (dest !== clamped) toast(readinessGateMessage(liveGate), 'error')
+      // Flush: the pending debounced save (if any) is superseded by this write
+      // of the freshest config at the destination step — exactly one save.
+      cancelPendingSave()
+      persistNow(dest, live)
+      navigate(`/deployments/${deploymentId}/wizard/${dest}`)
+    },
+    [draftStatus, deploymentId, navigate, toast, cancelPendingSave, persistNow]
+  )
+
   if (draft === undefined || (draft && !config)) {
     return <p className="muted">Loading deployment…</p>
   }
@@ -164,14 +264,6 @@ export function WizardShell(): React.JSX.Element {
   // condition `resolvedStep` was computed under.
   const activeStep = resolvedStep!
 
-  const persist = (nextStep: WizardStep, nextConfig: WizardConfig): void => {
-    void window.rds
-      .draftSave({ deploymentId, step: nextStep, config: nextConfig })
-      .catch((e: unknown) =>
-        toast(e instanceof Error ? e.message : 'Failed to save draft', 'error')
-      )
-  }
-
   const value: WizardContextValue = {
     deploymentId,
     name: draft.name,
@@ -182,42 +274,41 @@ export function WizardShell(): React.JSX.Element {
     status: draft.status,
     step: activeStep,
     config: config!,
-    updateConfig: (patch) => {
-      // Merge over the ref, not the render snapshot — see the ref docs above.
-      const next = { ...configRef.current!, ...patch }
-      configRef.current = next
-      setConfig(next)
-      persist(activeStepRef.current, next)
-    },
-    goToStep: (target) => {
-      const clamped0 = clampStep(target, draft.status)
-      const clamped = isKeyless(configRef.current!) && clamped0 === 'readiness' ? 'mappings' : clamped0
-      // The gate is read from the LIVE config (a Readiness check that just
-      // persisted opens it in the same tick).
-      const liveGate = readinessGate(configRef.current!)
-      const dest = liveGate.blocked && stepClosedByReadiness(clamped) ? 'readiness' : clamped
-      if (dest !== clamped) toast(readinessGateMessage(liveGate), 'error')
-      persist(dest, configRef.current!)
-      navigate(`/deployments/${deploymentId}/wizard/${dest}`)
-    },
-    refreshDraft
+    updateConfig,
+    goToStep,
+    refreshDraft,
+    describe: describeCache.describe
   }
+
+  const visible = visibleWizardSteps(config!)
+  const stepNumber = visible.indexOf(activeStep) + 1
 
   return (
     <WizardContext.Provider value={value}>
       <div className="wizard-head">
+        <nav className="breadcrumb" aria-label="Breadcrumb">
+          <Link to="/">Deployments</Link>
+          <span aria-hidden="true"> › </span>
+          <span>{draft.name}</span>
+          {draft.status !== 'Draft' && (
+            <>
+              <span aria-hidden="true"> · </span>
+              <Link to={`/deployments/${deploymentId}`}>Monitor</Link>
+            </>
+          )}
+        </nav>
         <h1>{draft.name}</h1>
         <p className="sub">
-          {draft.sourceLabel} → {draft.targetLabel} · {draft.status}
+          {draft.sourceLabel} → {draft.targetLabel} · {draft.status} · Step {stepNumber} of {visible.length}
         </p>
         <nav className="wizard-steps">
-          {visibleWizardSteps(config!).filter((s) => stepIndex(s) <= stepIndex(cap)).map((s) => {
+          {visible.filter((s) => stepIndex(s) <= stepIndex(cap)).map((s) => {
             const closed = gate.blocked && stepClosedByReadiness(s)
             return (
               <button
                 key={s}
                 className={`wizard-step ${s === activeStep ? 'active' : ''} ${closed ? 'gated' : ''}`}
-                onClick={() => value.goToStep(s)}
+                onClick={() => goToStep(s)}
                 aria-disabled={closed || undefined}
                 title={closed ? readinessGateMessage(gate) : undefined}
               >

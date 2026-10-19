@@ -3,6 +3,8 @@
  * S59 — the Templates list (/templates): every kind listed, type filter,
  * wizard kinds read-only (Rename / Delete only), runnable kinds with Edit /
  * Run / Duplicate / Export, import + sample buttons wired.
+ * S64 P3 (ux C-8 / T-11): one primary per row + a "…" menu; the last run is a
+ * shared-vocabulary badge and a relative time with the exact stamp on `title`.
  */
 import '@testing-library/jest-dom/vitest'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
@@ -94,8 +96,12 @@ describe('TemplatesPage', () => {
     expect(within(table).getByText('Objects')).toBeInTheDocument()
     expect(within(table).getByText('the config seed')).toBeInTheDocument()
     expect(within(table).getByText('src')).toBeInTheDocument()
-    expect(within(table).getByText('clean')).toBeInTheDocument()
-    expect(within(table).getByText(/dry-run · sb3/)).toBeInTheDocument()
+    // Last run: shared vocabulary ("Completed", not "clean"), relative time, exact stamp on title.
+    expect(within(table).queryByText('clean')).toBeNull()
+    const lastRun = within(table).getByRole('link', { name: /Completed.*dry-run · sb3/ })
+    expect(lastRun).toHaveAttribute('href', '/templates/2/runs/9')
+    const when = within(lastRun).getByText(/dry-run · sb3 · .+ ago$/)
+    expect(when).toHaveAttribute('title', expect.stringMatching(/\d/))
   })
 
   it('wizard kinds get Rename + Delete only; runnable kinds get Edit / Run / Duplicate / Export too', async () => {
@@ -111,6 +117,29 @@ describe('TemplatesPage', () => {
     expect(within(seedRow).getByRole('button', { name: 'Run' })).toBeInTheDocument()
     expect(within(seedRow).getByRole('button', { name: 'Duplicate' })).toBeInTheDocument()
     expect(within(seedRow).getByRole('button', { name: 'Export…' })).toBeInTheDocument()
+    expect(within(seedRow).getByRole('button', { name: 'Rename' })).toBeInTheDocument()
+    expect(within(seedRow).getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+  })
+
+  // S64 P3 (ux C-8): one primary action per row; everything else sits in a "…" <details> menu.
+  it('shows one primary per row (Run for runnable, Rename for wizard presets) and the rest in a "…" menu', async () => {
+    renderPage()
+    await screen.findByRole('table', { name: 'Templates' })
+    const seedRow = screen.getByTestId('template-1')
+    const seedPrimaries = seedRow.querySelectorAll('.template-actions .btn.primary')
+    expect(seedPrimaries).toHaveLength(1)
+    expect(seedPrimaries[0]).toHaveTextContent('Run')
+    const seedMenu = seedRow.querySelector('details.card-menu')!
+    expect(seedMenu).not.toBeNull()
+    expect(seedMenu.querySelector('summary')).toHaveAttribute('aria-label', 'More actions for Acme CPQ configuration')
+    for (const name of ['Edit', 'Duplicate', 'Export…', 'Rename', 'Delete']) {
+      expect(within(seedMenu as HTMLElement).getByRole('button', { name })).toBeInTheDocument()
+    }
+    const wizardRow = screen.getByTestId('template-3')
+    expect(wizardRow.querySelectorAll('.template-actions .btn.primary')).toHaveLength(0)
+    const wizardMenu = wizardRow.querySelector('details.card-menu') as HTMLElement
+    expect(within(wizardMenu).getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+    expect(within(wizardMenu).queryByRole('button', { name: 'Rename' })).toBeNull() // Rename is the row's primary
   })
 
   it('filters by type', async () => {

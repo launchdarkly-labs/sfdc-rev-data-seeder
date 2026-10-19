@@ -13,6 +13,12 @@ import { useWizard } from './WizardShell'
  * VERBATIM — they are a user-level procedure documented in the gate design
  * (Session 28) and must not drift.
  *
+ * S64 (P3, ux IA-7 / A-13): the CPQ notice is its own component
+ * (`CpqTriggersNotice`) so the Plan step's Pre-flight card can show it in the
+ * "Triggers Disabled confirmation" row; the panel itself keeps the master
+ * toggles, the Re-scan button (beside the heading, not inside it) and the item
+ * table, which now sits under a collapsed disclosure.
+ *
  * Toggle semantics: every discovered item DEFAULTS to "disable for deployment";
  * `config.automationToggles` stores only the user's opt-OUTs (key → false),
  * so a fresh discovery never inherits stale approvals. Trigger rows are not
@@ -44,7 +50,7 @@ const BADGE_TONES: Record<
 // same selection predicate — re-exported so existing imports keep working.
 export { effectiveDisable }
 
-function summaryLine(s: AutomationSnapshot): string {
+export function summaryLine(s: AutomationSnapshot): string {
   const parts: string[] = []
   if (s.validationRuleCount > 0) parts.push(`${s.validationRuleCount} validation rules`)
   if (s.flowCount > 0) parts.push(`${s.flowCount} flows`)
@@ -60,6 +66,65 @@ export function cpqObjectSummary(objs: readonly string[]): string {
   return `${objs.slice(0, 8).join(', ')} and ${objs.length - 8} more`
 }
 
+/** The LWC `showCpqManualTriggerNotice` term: gated objects, no legacy setting, scan finished. */
+export function cpqNoticeRequired(snapshot: AutomationSnapshot | undefined, discovering: boolean): boolean {
+  return (
+    !discovering &&
+    !!snapshot &&
+    !snapshot.hasCpqTriggerSetting &&
+    snapshot.cpqTriggerGatedObjects.length > 0
+  )
+}
+
+/**
+ * The verbatim CPQ "Triggers Disabled" notice + the attestation checkbox. Rendered
+ * by the Plan step inside its Pre-flight card (S64 P3); the text is pinned by
+ * test/ui/automationPanel.test.tsx.
+ */
+export function CpqTriggersNotice({ snapshot }: { snapshot: AutomationSnapshot }): React.JSX.Element {
+  const { config, updateConfig } = useWizard()
+  return (
+    <div className="banner warn cpq-notice" role="alert">
+      <p>
+        <strong>
+          Required — disable Salesforce CPQ triggers on the target org before deploying.
+        </strong>
+        <br />
+        This deployment includes objects that Salesforce CPQ&rsquo;s managed triggers react to (
+        {cpqObjectSummary(snapshot.cpqTriggerGatedObjects)}). The app cannot turn these off
+        automatically, and deploying with them active lets CPQ automation recalculate and
+        generate records against the data as it loads. In the <strong>target org</strong>:
+      </p>
+      <ol>
+        <li>
+          Setup &rarr; Installed Packages &rarr; <strong>Salesforce CPQ</strong> &rarr;
+          Configure &rarr; Additional Settings tab
+        </li>
+        <li>
+          Check <strong>Triggers Disabled</strong> and Save
+        </li>
+        <li>Come back here and confirm below</li>
+        <li>
+          When the deployment finishes, <strong>uncheck it</strong> to turn CPQ automation back
+          on
+        </li>
+      </ol>
+      <label className="cpq-attest">
+        <input
+          type="checkbox"
+          checked={config.cpqAttestation}
+          onChange={(e) => updateConfig({ cpqAttestation: e.target.checked })}
+        />{' '}
+        {"Confirmed — I checked 'Triggers Disabled' in the target org"}
+      </label>
+      <p className="muted">
+        If CPQ triggers turn out to still be active, the deployment stops itself at the first
+        CPQ trigger error instead of continuing.
+      </p>
+    </div>
+  )
+}
+
 export function AutomationPanel({
   snapshot,
   discovering,
@@ -72,12 +137,6 @@ export function AutomationPanel({
   onRescan: () => void
 }): React.JSX.Element {
   const { config, updateConfig } = useWizard()
-
-  const showCpqNotice =
-    !discovering &&
-    !!snapshot &&
-    !snapshot.hasCpqTriggerSetting &&
-    snapshot.cpqTriggerGatedObjects.length > 0
 
   function setItemDisable(item: AutomationItem, disable: boolean): void {
     const key = automationItemKey(item)
@@ -98,53 +157,13 @@ export function AutomationPanel({
 
   return (
     <section className="automation-panel">
-      <h3>
-        Target Org Automation{' '}
+      {/* A-13: the heading no longer contains the button, so it reads as a heading. */}
+      <div className="automation-head">
+        <h3>Target org automation</h3>
         <button className="btn" onClick={onRescan} disabled={discovering}>
           Re-scan
         </button>
-      </h3>
-
-      {showCpqNotice && snapshot && (
-        <div className="banner warn cpq-notice" role="alert">
-          <p>
-            <strong>
-              Required — disable Salesforce CPQ triggers on the target org before deploying.
-            </strong>
-            <br />
-            This deployment includes objects that Salesforce CPQ&rsquo;s managed triggers react to (
-            {cpqObjectSummary(snapshot.cpqTriggerGatedObjects)}). The app cannot turn these off
-            automatically, and deploying with them active lets CPQ automation recalculate and
-            generate records against the data as it loads. In the <strong>target org</strong>:
-          </p>
-          <ol>
-            <li>
-              Setup &rarr; Installed Packages &rarr; <strong>Salesforce CPQ</strong> &rarr;
-              Configure &rarr; Additional Settings tab
-            </li>
-            <li>
-              Check <strong>Triggers Disabled</strong> and Save
-            </li>
-            <li>Come back here and confirm below</li>
-            <li>
-              When the deployment finishes, <strong>uncheck it</strong> to turn CPQ automation back
-              on
-            </li>
-          </ol>
-          <label className="cpq-attest">
-            <input
-              type="checkbox"
-              checked={config.cpqAttestation}
-              onChange={(e) => updateConfig({ cpqAttestation: e.target.checked })}
-            />{' '}
-            {"Confirmed — I checked 'Triggers Disabled' in the target org"}
-          </label>
-          <p className="muted">
-            If CPQ triggers turn out to still be active, the deployment stops itself at the first
-            CPQ trigger error instead of continuing.
-          </p>
-        </div>
-      )}
+      </div>
 
       <label className="master-toggle">
         <input
@@ -171,7 +190,12 @@ export function AutomationPanel({
         Disable in-scope classic workflow rules while deploying
       </label>
 
-      {discovering && <p className="muted">Scanning target org for active automation...</p>}
+      {discovering && (
+        <p className="muted" role="status">
+          Scanning target org for active automation…
+          <span className="spinner" aria-hidden="true" />
+        </p>
+      )}
       {error && (
         <div className="banner error">
           Automation discovery failed: {error.message}{' '}
@@ -216,58 +240,63 @@ export function AutomationPanel({
                 Found: {summaryLine(snapshot)}. <strong>{toDisableCount}</strong> item
                 {toDisableCount === 1 ? '' : 's'} will be disabled.
               </p>
-              <div className="automation-table-wrap">
-                <table className="automation-table">
-                  <thead>
-                    <tr>
-                      <th>Disable</th>
-                      <th>Type</th>
-                      <th>Name</th>
-                      <th>Object</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleItems.map((item) => (
-                      <tr key={automationItemKey(item)}>
-                        <td>
-                          {item.automationType === 'ApexTrigger' ? (
-                            <span className="muted">N/A</span>
-                          ) : (
-                            <input
-                              type="checkbox"
-                              aria-label={`Disable ${TYPE_LABELS[item.automationType]} ${item.name}${item.objectName ? ` on ${item.objectName}` : ''}`}
-                              checked={config.automationToggles[automationItemKey(item)] ?? true}
-                              onChange={(e) => setItemDisable(item, e.target.checked)}
-                            />
-                          )}
-                        </td>
-                        <td>
-                          <Badge tone={BADGE_TONES[item.automationType]}>
-                            {TYPE_LABELS[item.automationType]}
-                          </Badge>
-                        </td>
-                        <td>
-                          {item.name}
-                          {item.automationType === 'ApexTrigger' && (
-                            <span className="muted"> (cannot toggle via API)</span>
-                          )}{' '}
-                          {item.isManagedPackage && <Badge tone="neutral">Managed</Badge>}
-                        </td>
-                        <td>{item.objectName || '—'}</td>
-                      </tr>
-                    ))}
-                    {visibleItems.length === 0 && (
+              <details className="automation-details">
+                <summary>
+                  Show the {snapshot.items.length} discovered item{snapshot.items.length === 1 ? '' : 's'}
+                </summary>
+                <div className="automation-table-wrap">
+                  <table className="automation-table">
+                    <thead>
                       <tr>
-                        <td colSpan={4} className="muted">
-                          {snapshot.items.length} discovered item
-                          {snapshot.items.length === 1 ? ' is' : 's are'} hidden by the master
-                          toggles above.
-                        </td>
+                        <th>Disable</th>
+                        <th>Type</th>
+                        <th>Name</th>
+                        <th>Object</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {visibleItems.map((item) => (
+                        <tr key={automationItemKey(item)}>
+                          <td>
+                            {item.automationType === 'ApexTrigger' ? (
+                              <span className="muted">N/A</span>
+                            ) : (
+                              <input
+                                type="checkbox"
+                                aria-label={`Disable ${TYPE_LABELS[item.automationType]} ${item.name}${item.objectName ? ` on ${item.objectName}` : ''}`}
+                                checked={config.automationToggles[automationItemKey(item)] ?? true}
+                                onChange={(e) => setItemDisable(item, e.target.checked)}
+                              />
+                            )}
+                          </td>
+                          <td>
+                            <Badge tone={BADGE_TONES[item.automationType]}>
+                              {TYPE_LABELS[item.automationType]}
+                            </Badge>
+                          </td>
+                          <td>
+                            {item.name}
+                            {item.automationType === 'ApexTrigger' && (
+                              <span className="muted"> (cannot toggle via API)</span>
+                            )}{' '}
+                            {item.isManagedPackage && <Badge tone="neutral">Managed</Badge>}
+                          </td>
+                          <td>{item.objectName || '—'}</td>
+                        </tr>
+                      ))}
+                      {visibleItems.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="muted">
+                            {snapshot.items.length} discovered item
+                            {snapshot.items.length === 1 ? ' is' : 's are'} hidden by the master
+                            toggles above.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
             </>
           )}
         </>

@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { WizardShell } from '../../src/renderer/src/pages/wizard/WizardShell'
 import { ToastProvider } from '../../src/renderer/src/ui/Toast'
 import { emptyWizardConfig, readinessScopeKey } from '../../src/shared/wizard'
+import { GLOSSARY } from '../../src/shared/labels'
 /** S54 (L1): a Readiness verdict that OPENS the gate for exactly this scope. */
 function readinessReady(objects: string[]) {
   return {
@@ -195,7 +196,10 @@ describe('StepPlan (5B.8-a)', () => {
     await waitFor(() =>
       expect(rowOrder()).toEqual(['Account', 'Contact', 'OpportunityContactRole', 'Opportunity'])
     )
-    expect(screen.getByText('junction — matched, not upserted')).toBeInTheDocument()
+    // T-5: the badge says "junction" and carries the glossary line; a legend repeats it once.
+    const badge = screen.getByTitle(GLOSSARY.junction)
+    expect(badge).toHaveTextContent('junction')
+    expect(screen.getByText(GLOSSARY.junction, { exact: false, selector: '.legend' })).toBeInTheDocument()
     const junctionRow = await findRow('OpportunityContactRole')
     expect(junctionRow.draggable).toBe(false)
     expect(junctionRow.querySelector('.drag-handle')).toBeNull()
@@ -205,9 +209,12 @@ describe('StepPlan (5B.8-a)', () => {
     expect((await findRow('Account')).draggable).toBe(true)
   })
 
-  it('renders deferred fields as a revisit-pass badge on the object row', async () => {
+  it('renders deferred fields as a second-pass badge on the object row (T-15 wording)', async () => {
     renderPlan()
-    await screen.findByText(/revisit pass · 1 deferred field/)
+    const badge = await screen.findByText(/Second pass · 1 deferred field/)
+    expect(badge).toHaveAttribute('title', GLOSSARY.deferred)
+    expect(screen.getAllByText(/First pass · REST/).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/revisit pass/)).toBeNull()
   })
 
   it('move-down sends the slot-refill order (junction excluded) and re-renders the result', async () => {
@@ -369,13 +376,16 @@ describe('StepPlan — S63 text-Id relink notice', () => {
     expect(note).toHaveTextContent('SBQQ__Subscription__c.SBQQ__RequiredById__c')
     expect(note).toHaveTextContent('SBQQ__Quote__c.SBQQ__PricebookId__c')
     expect(note).not.toHaveTextContent('Scope gap')
-    expect(note.className).toContain('info')
+    // No scope gap → the Pre-flight row is a plain ✓, not a warning.
+    expect(note.closest('.preflight-row')).toHaveAttribute('data-state', 'ok')
+    expect(screen.getByTestId('preflight-relink')).toHaveTextContent('Relink of 5 text-Id fields')
   })
-  it('plain Account/Contact plan → no notice', async () => {
+  it('plain Account/Contact plan → no notice, and the row says so', async () => {
     currentOrder = ['Account', 'Contact']
     selectedObjects = [...currentOrder]
     renderPlan()
     await screen.findByRole('heading', { name: 'Deployment plan' })
     expect(screen.queryByTestId('relink-notice')).toBeNull()
+    expect(screen.getByTestId('preflight-relink')).toHaveTextContent('No text fields in this plan hold record Ids')
   })
 })

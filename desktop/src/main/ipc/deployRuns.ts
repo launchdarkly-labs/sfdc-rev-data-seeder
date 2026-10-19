@@ -43,7 +43,7 @@ import { targetLockConflict, type TargetLockCandidate } from '../services/runLoc
 import { preRunAudit, postRunAudit } from '../services/runAudit'
 import { startMemorySampler } from '../services/memorySampler'
 import { runUuidFor } from '../services/deployStore'
-import { makeDeployIo, describeDeployFields, makeDeployIdMap } from '../services/deployIo'
+import { makeDeployIo, makeDescribeMemo, makeDeployIdMap } from '../services/deployIo'
 import { freezePlan } from '../engine/deploy/planFreeze'
 import { makePassExecutors } from '../engine/deploy/passes'
 import { runDeployment } from '../engine/deploy/orchestrator'
@@ -240,13 +240,31 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
   // The attempt body. `onRun` fires once, right after createRun, so the
   // wrapper below knows whether a run row (and its status mirror) exists
   // when something throws.
+  // S64 P5 (5.2): one describe per (org, object) for this whole attempt —
+  // the freeze below and every engine pass read through it; the count is
+  // logged at the end of the job.
+  const describes = makeDescribeMemo()
   const work = async (
     ctx: JobContext,
     onRun: (runId: number) => void
   ): Promise<{ outcome: RunOutcome } & RunCounters> => {
     const cfg = draft.config
 
-    ctx.phase('Connecting')
+    // S64 P5 (5.1): the handler's own phases are stamped into run_phases at
+    // the moment they happen. Before createRun there is no row to stamp, so
+    // they are buffered and flushed right after it; the engine's phases are
+    // stamped by setRunPhase itself. The pre-engine `ctx.phase('Deploying')`
+    // is a job label only — the engine's first transition follows at once.
+    const preRunStamps: { phase: string; at: number }[] = []
+    let stampRunId: number | null = null
+    const stampPhase = (name: string): void => {
+      ctx.phase(name)
+      const at = Date.now()
+      if (stampRunId == null) preRunStamps.push({ phase: name, at })
+      else store.deploy.stampRunPhases(stampRunId, [{ phase: name, at }])
+    }
+
+    stampPhase('Connecting')
     const source = await connectById(draft.sourceConnectionId, 'source')
     // NO role override (REVIEW-FIX): overriding to 'target' would
     // silently re-promote a connection the user demoted on the
@@ -264,7 +282,7 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
 
     // FRESH automation discovery — the attestation gate re-evaluates
     // against current target state, never a stale wizard snapshot.
-    ctx.phase('Gates')
+    stampPhase('Gates')
     const scope = planned.map((p) => p.objectName)
     const discoveryIo = makeAutomationIo(target)
     const snapshot = await discoverAutomation(discoveryIo, scope)
@@ -287,7 +305,7 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
 
     // Freeze: ORG-WIDE targetHasExtId (batchCheckRdsField oracle — a
     // scoped set over-downgrades A10), full describes per object.
-    ctx.phase('Freezing plan')
+    stampPhase('Freezing plan')
     // S61 (U-5): keyless = no External Id field anywhere — no org-wide key probe, no keyed-row
     // probe, no own-key refusal; the id map is the matching mechanism for this run.
     const keyless = isKeyless(cfg)
@@ -301,7 +319,7 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
     const targetHasExtId = keyless ? new Set<string>() : await targetHasExtIdOrgWide(target)
     const objects = []
     for (const p of planned) {
-      const sourceFields = await describeDeployFields(source, p.objectName)
+      const sourceFields = await describes.get(source, p.objectName)
       // populated-only (REVIEW-FIX): when the user chose it, the probe
       // MUST run — populatedFields:null excludes nothing, silently
       // deploying every field the wizard displayed as excluded. A probe
@@ -317,7 +335,7 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
       objects.push({
         planned: p,
         sourceFields,
-        targetFields: await describeDeployFields(target, p.objectName),
+        targetFields: await describes.get(target, p.objectName),
         populatedFields
       })
       ctx.cancel.throwIfCancelled()
@@ -364,12 +382,14 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
     store.setCurrentRun(deploymentId, run.id)
     store.deploy.setRunCpqTriggerSetting(run.id, snapshot.hasCpqTriggerSetting)
     onRun(run.id)
+    stampRunId = run.id
+    store.deploy.stampRunPhases(run.id, preRunStamps)
 
     // S53 (item 1) — pre-run audit, READ-ONLY, fail-open: does the target
     // already hold unkeyed rows under RDS-keyed parents (an earlier run's
     // automation residue, or hand-made records)? Said BEFORE the run so the
     // operator knows a re-run cannot remove or de-duplicate them.
-    ctx.phase('Auditing target')
+    stampPhase('Auditing target')
     if (keyless) ctx.log('Pre-run audit skipped: a keyless deployment leaves no RDS key to tell its rows from others.', 'info')
     else try {
       await preRunAudit({
@@ -399,6 +419,7 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
       source,
       target,
       store: store.deploy,
+      describes,
       ...(keyless ? { idMap: makeDeployIdMap(store.deploy, target, deploymentId) } : {}),
       emit: (event) => {
         if (event.kind === 'phase') ctx.phase(String(event.data.phase ?? ''))
@@ -455,7 +476,7 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
     // user WITHOUT the RDS key are the fingerprint of target automation
     // that ran during the load (the "two of every product" class).
     // Runs after teardown so restore is already done; changes no outcome.
-    ctx.phase('Auditing target')
+    stampPhase('Auditing target')
     try {
       await postRunAudit({
         target,
@@ -475,6 +496,11 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
         /* the run row is gone — nothing to stamp */
       }
     }
+
+    // S64 P5 (5.1): end-of-job stamp — the post-run audit runs AFTER the
+    // engine's terminal phase, so without this its duration would be open.
+    // Store-only (the job label is not changed).
+    store.deploy.stampRunPhases(run.id, [{ phase: 'Finished', at: Date.now() }])
 
     const counters = store.deploy.runCounters(run.id)
     // Terminal mapping (orchestrator.ts:34-36 contract): 'cancelled'
@@ -619,6 +645,23 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
       } finally {
         const peak = memory.stop()
         if (peak) ctx.log(peak, 'info')
+        // S64 P5 (5.1): the same peaks, persisted on the run row (the log line died with the job).
+        const peaksMB = memory.peaksMB()
+        if (peaksMB && attempt.runId != null) {
+          try {
+            store.deploy.setRunPeakMemory(attempt.runId, peaksMB)
+          } catch {
+            /* the run row is gone — nothing to stamp */
+          }
+        }
+        // S64 P5 (5.2): the describe count is the measurement for the memo (~65 → ~22 per 11-object run).
+        const ds = describes.stats()
+        if (ds.fetched + ds.served > 0) {
+          ctx.log(
+            `Describes this run: ${ds.fetched} fetched from the orgs, ${ds.served} served from the run cache.`,
+            'info'
+          )
+        }
         deployRunByJob.delete(ctx.jobId)
       }
     },
