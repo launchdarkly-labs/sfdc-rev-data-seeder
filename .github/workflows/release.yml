@@ -101,7 +101,7 @@ jobs:
           if [ -n "$CSC_LINK" ]; then spctl --assess --type execute --verbose=2 "$APP"; fi
           shasum -a 256 release/*.dmg | tee release/SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: rds-desktop-dmg
           path: |
