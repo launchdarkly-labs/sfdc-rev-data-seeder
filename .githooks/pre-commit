@@ -1,0 +1,10 @@
+#!/bin/sh
+# RDS secret-scan pre-commit hook (A10) — blocks committing a credential.
+# Institutionalizes the Session-26 leak scar. Scans only STAGED files.
+#
+# Activate once per clone:  cd desktop && npm run hooks:install
+# (sets core.hooksPath=.githooks). Bypass in an emergency with `git commit -n`.
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT/desktop"
+npm run --silent scan:secrets -- --staged

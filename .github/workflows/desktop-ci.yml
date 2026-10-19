@@ -1,0 +1,32 @@
+# RDS Desktop CI (ROADMAP 0.5) — typecheck + pure-logic vitest suites.
+# Tests deliberately avoid better-sqlite3/Electron natives, so no rebuild step
+# is needed here. Packaging/e2e lanes come later (5A.4 / E7.1).
+name: desktop-ci
+on:
+  push:
+    paths: ['desktop/**', '.github/workflows/desktop-ci.yml']
+  pull_request:
+    paths: ['desktop/**', '.github/workflows/desktop-ci.yml']
+jobs:
+  test:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      # Secret scan (A10) runs FIRST + over the whole repo (git ls-files) so a
+      # leaked credential fails the build before anything else — the Session-26 scar.
+      - run: npm run scan:secrets
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      # Integration lane exercises the real better-sqlite3 Store. `npm ci`
+      # already installs the node-ABI prebuild, so no rebuild step is needed.
+      - run: npm run test:store

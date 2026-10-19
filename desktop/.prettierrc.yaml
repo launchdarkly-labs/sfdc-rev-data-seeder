@@ -1,0 +1,5 @@
+# Matches the scaffold style the tree was written in.
+semi: false
+singleQuote: true
+printWidth: 100
+trailingComma: none

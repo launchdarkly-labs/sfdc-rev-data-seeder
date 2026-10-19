@@ -1,0 +1,29 @@
+# RDS Desktop packaging (A1/E7.1) — INTERNAL distribution, ad-hoc signed.
+# Decision 2026-07-23 (ROADMAP log): no Apple Developer account, no notarization;
+# first open on another Mac is right-click → Open. Fuses are flipped and the
+# bundle ad-hoc signed in scripts/afterPack.cjs.
+appId: com.launchdarkly.rds-desktop
+productName: RDS Desktop
+directories:
+  output: release
+files:
+  - out/**/*
+  - package.json
+asar: true
+npmRebuild: true
+afterPack: ./scripts/afterPack.cjs
+mac:
+  # identity null = electron-builder does NOT codesign; afterPack.cjs ad-hoc
+  # signs (with hardened runtime + entitlements) after the fuse flip so the
+  # seal covers the flipped framework.
+  identity: null
+  category: public.app-category.developer-tools
+  # Apple Silicon only (the LD architect fleet). Rosetta does not translate
+  # arm64→x86_64, so an Intel Mac cannot open an arm64-only build. Revisit with
+  # a universal build (per-arch better-sqlite3 prebuilds) only if an Intel
+  # laptop enters the fleet.
+  target:
+    - target: dmg
+      arch: [arm64]
+dmg:
+  writeUpdateInfo: false

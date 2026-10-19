@@ -1,0 +1,37 @@
+# --- build output / deps (desktop/ has its own .gitignore too) ---
+node_modules/
+desktop/out/
+desktop/release/
+dist/
+*.tsbuildinfo
+
+# --- local env + databases ---
+.env
+.env.local
+*.local
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# --- the packaged app artifact (113 MB; rebuild with npm run package:dmg) ---
+archive/*.dmg
+
+# --- agent working files (session-local; see SESSION_HANDOFF.md) ---
+.claude/
+Session Briefings/
+NEXT_AGENT_PROMPT.md
+NEXT_AGENT_PROMPT.txt
+
+# --- logs / os ---
+*.log
+npm-debug.log*
+.logs/
+.DS_Store
+
+# --- internal working docs: session logs, plans, test sheets, roadmap (kept local, never published) ---
+PROJECT_JOURNAL.md
+SESSION_HANDOFF.md
+CURRENT_ITERATION_ARCHITECTURE.md
+docs/
+desktop/ROADMAP.md
