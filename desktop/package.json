@@ -5,6 +5,7 @@
   "main": "out/main/index.js",
   "private": true,
   "author": "Jack Ziesing",
+  "license": "MIT",
   "scripts": {
     "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
     "build": "electron-vite build",
