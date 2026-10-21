@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1 — unreleased
+
+### Appearance
+- **Accent is now LaunchDarkly blue.** The amber accent (`#f29d38`) is replaced by the blue from the LD brand palette
+  (`#405BFF`), in a two-tone treatment: fills (primary buttons, the brand tile, the app icon) use the brand blue with
+  white labels; text, borders, badges and tints use a lightened blue on the dark theme (`#7a8dff`, 6.3:1) and a darker one
+  on the light theme (`#1a3aff`, 6.2:1), because the brand blue alone is only 3.7:1 as text on graphite. Neutrals, type,
+  the mark and the warning amber are unchanged — the app borrows one brand colour without becoming an LD product.
+- `npm run icon` regenerates `build/icon.png` + `build/icon.icns` from `build/icon.svg` with Electron's own renderer
+  (macOS `sips` + `iconutil` for the iconset); the 0.4.0 icon had been produced by hand.
+- Token test now also checks the accent as TEXT (≥ 4.5:1 on the page and on panels) in both themes.
+
+### Housekeeping
+- **Secret scan covers untracked files.** `npm run scan:secrets` now reads `git ls-files` plus `git ls-files --others
+  --exclude-standard`, so a new file is scanned before it is ever staged (0.4.0 added 33 files that only the pre-commit
+  `--staged` run ever checked). Gitignored paths are still never read. `--staged` is unchanged.
+
 ## 0.4.0 — 2026-10-19 (S64–S67: polish pass — platform, design tokens, first-run UX, branding, measured performance)
 
 ### Platform (P0)

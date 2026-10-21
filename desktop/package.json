@@ -27,6 +27,7 @@
     "parity": "tsx scripts/parity-ldseed.ts",
     "golden:capture": "tsx scripts/golden-capture.ts",
     "scan:secrets": "tsx scripts/scan-secrets.ts",
+    "icon": "electron scripts/make-icon.cjs",
     "hooks:install": "git config core.hooksPath .githooks",
     "package": "electron-vite build && electron-rebuild -f -w better-sqlite3 && electron-builder --mac --dir",
     "package:dmg": "electron-vite build && electron-rebuild -f -w better-sqlite3 && electron-builder --mac",

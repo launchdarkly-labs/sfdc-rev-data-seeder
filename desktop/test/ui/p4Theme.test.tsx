@@ -105,8 +105,10 @@ describe('Icon', () => {
     expect(screen.getByRole('img', { name: 'Needs attention' })).toBeInTheDocument()
   })
 
-  it('the brand mark uses the accent token, not a literal colour', () => {
+  it('the brand mark uses the FILL accent token, not a literal colour', () => {
+    // S68: `--accent-strong` is the brand-blue fill; `--accent` is the lightened
+    // text blue on dark and would make the tile the wrong colour.
     const { container } = render(<RdsMark />)
-    expect(container.querySelector('rect')?.getAttribute('fill')).toBe('var(--accent)')
+    expect(container.querySelector('rect')?.getAttribute('fill')).toBe('var(--accent-strong)')
   })
 })

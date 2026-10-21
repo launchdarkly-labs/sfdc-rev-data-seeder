@@ -114,11 +114,11 @@ export function Icon({
   )
 }
 
-/** The RDS mark: an amber tile with a seed sprouting into an arrow — source → target. */
+/** The RDS mark: a brand-blue tile (the fill token, not the text one) with a seed sprouting into an arrow — source → target. */
 export function RdsMark({ size = 24 }: { size?: number }): React.JSX.Element {
   return (
     <svg className="rds-mark" width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-      <rect width="32" height="32" rx="8" fill="var(--accent)" />
+      <rect width="32" height="32" rx="8" fill="var(--accent-strong)" />
       <path
         d="M9 22c0-5 3-9 8-10M17 12c3 0 5 1.5 6 4-3 .5-5-.5-6-4z"
         fill="none"

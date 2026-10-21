@@ -72,6 +72,17 @@ describe.each([
     expect(c('--on-danger', '--danger-strong')).toBeGreaterThanOrEqual(4.5)
   })
 
+  // S68: the accent is also TEXT (badges, selected rows, KPI values, links in
+  // tables — 25 call sites) and a border, not only a button fill. The amber
+  // passed this by luck of its brightness; the LD blue only passes because the
+  // dark theme lightens the text token (`--accent`) and keeps the brand blue for
+  // fills (`--accent-strong`). Guard the split so a future recolour cannot put
+  // a fill-only colour back into the text slot.
+  it('accent as text is AA on the page and on panels (≥ 4.5:1)', () => {
+    expect(c('--accent', '--bg')).toBeGreaterThanOrEqual(4.5)
+    expect(c('--accent', '--panel')).toBeGreaterThanOrEqual(4.5)
+  })
+
   it('status colours read as text on the page (≥ 4.5:1 for 13px text)', () => {
     for (const tok of ['--green', '--amber', '--red']) {
       expect(c(tok, '--bg'), tok).toBeGreaterThanOrEqual(4.5)

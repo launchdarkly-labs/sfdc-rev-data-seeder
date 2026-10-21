@@ -1,14 +1,17 @@
 /**
- * Secret-scan runner (A10). Scans the repo's TRACKED files (or, with --staged,
- * only staged files) for high-confidence secret signatures and exits non-zero on
- * any hit. Wired into CI (desktop-ci.yml) and the repo-root pre-commit hook
- * (.githooks/pre-commit) so the Session-26 leak can't recur.
+ * Secret-scan runner (A10). Scans the repo's TRACKED files PLUS untracked files
+ * that are not gitignored (or, with --staged, only staged files) for
+ * high-confidence secret signatures and exits non-zero on any hit. Wired into CI
+ * (desktop-ci.yml) and the repo-root pre-commit hook (.githooks/pre-commit) so
+ * the Session-26 leak can't recur.
  *
- *   tsx scripts/scan-secrets.ts            # all tracked files
+ *   tsx scripts/scan-secrets.ts            # tracked + untracked (not ignored) files
  *   tsx scripts/scan-secrets.ts --staged   # only git-staged files (pre-commit)
  *
- * Only TRACKED/STAGED files are read, so gitignored secrets (desktop/.env.local)
- * are never scanned — and never committable, which is the point.
+ * Untracked files are included because a NEW file is exactly what a scan before
+ * `git add` has to catch (0.4.0 added 33 files that `git ls-files` never saw —
+ * only the --staged hook run checked them). Gitignored paths (desktop/.env.local)
+ * are still never scanned — and never committable, which is the point.
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync, existsSync, statSync } from 'node:fs'
@@ -27,16 +30,23 @@ function repoRoot(): string {
   return execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 }
 
-function fileList(root: string, stagedOnly: boolean): string[] {
-  const args = stagedOnly
-    ? ['diff', '--cached', '--name-only', '--diff-filter=ACM']
-    : ['ls-files']
+function gitPaths(root: string, args: string[]): string[] {
   return execFileSync('git', args, { cwd: root })
     .toString()
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
-    .filter((p) => !SKIP.test(p))
+}
+
+function fileList(root: string, stagedOnly: boolean): string[] {
+  const paths = stagedOnly
+    ? gitPaths(root, ['diff', '--cached', '--name-only', '--diff-filter=ACM'])
+    : [
+        ...gitPaths(root, ['ls-files']),
+        // untracked but NOT gitignored: the new files a pre-add scan must see
+        ...gitPaths(root, ['ls-files', '--others', '--exclude-standard']),
+      ]
+  return [...new Set(paths)].filter((p) => !SKIP.test(p))
 }
 
 function main(): void {
@@ -61,7 +71,7 @@ function main(): void {
     }
   }
 
-  const scope = stagedOnly ? 'staged' : 'tracked'
+  const scope = stagedOnly ? 'staged' : 'tracked + untracked'
   if (total > 0) {
     console.error(
       `\nSecret scan FAILED: ${total} potential secret(s) in ${scope} files. ` +

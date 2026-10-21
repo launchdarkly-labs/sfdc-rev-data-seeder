@@ -8,19 +8,22 @@
   color-scheme: dark;
 
   /* colour */
-  /* Direction C (S64 P4): true graphite neutrals, ONE warm accent for brand + primary
-     actions (dark text on it ≈ 9:1), warnings in a cooler yellow with an outlined style so
-     the accent is never read as a warning. */
+  /* Direction C (S64 P4), recoloured S68: true graphite neutrals and ONE accent for
+     brand + primary actions. The accent is LaunchDarkly blue (#405BFF, from the LD 2026
+     template) in a TWO-TONE treatment on dark: `--accent-strong` is the brand blue for
+     fills (white label 5.1:1), `--accent` is a lightened blue for text, borders, badges
+     and tints (6.3:1 on --bg) because the brand blue alone is only 3.7:1 as text here.
+     Warnings stay in the outlined amber style. */
   --bg: #121316;
   --panel: #1b1d22;
   --panel-2: #24272e;
   --border: #30343c;
   --text: #eceef2;
   --muted: #9ba3ad;
-  --accent: #f29d38;
-  --accent-strong: #f29d38; /* primary-button fill: dark text */
-  --on-accent: #121316;
-  --link: #f3ad59;
+  --accent: #7a8dff; /* text / border / badge use — 6.3:1 on --bg, 5.7:1 on --panel */
+  --accent-strong: #405bff; /* fills (primary button, brand tile): white text 5.1:1 */
+  --on-accent: #ffffff;
+  --link: #8f9fff; /* 7.6:1 on --bg */
   --green: #3fbf7f;
   --amber: #e3c15a; /* warning — outlined badges + left borders only */
   --red: #e5605a;
@@ -79,10 +82,10 @@
   --border: #d7d9de;
   --text: #17191d;
   --muted: #5c6370;
-  --accent: #b45309; /* 4.6:1 on --bg; white text 5.0:1 */
-  --accent-strong: #b45309;
+  --accent: #1a3aff; /* text / border use — 6.2:1 on --bg */
+  --accent-strong: #405bff; /* fills: the brand blue as-is; white text 5.1:1 */
   --on-accent: #ffffff;
-  --link: #9a4a0a;
+  --link: #1a3aff;
   --green: #167a46;
   --amber: #8a5a06;
   --red: #c73e37;
