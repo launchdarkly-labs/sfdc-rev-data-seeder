@@ -1,6 +1,6 @@
 {
   "name": "rds-desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Rev Data Seeder Desktop — off-platform orchestrator for cross-org CPQ/sales data migration",
   "main": "out/main/index.js",
   "private": true,

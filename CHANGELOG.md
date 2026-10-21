@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.1 — unreleased
+## 0.4.1 — 2026-10-21
 
 ### Appearance
 - **Accent is now LaunchDarkly blue.** The amber accent (`#f29d38`) is replaced by the blue from the LD brand palette
