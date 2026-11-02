@@ -5,6 +5,7 @@ import { ConfirmProvider } from './ui/ConfirmDialog'
 import { ToastProvider, useToast } from './ui/Toast'
 import { setAuthExpiredHandler } from './ipc/client'
 import { ConnectionsPage } from './pages/Connections'
+import { OrgDetailPage } from './pages/OrgDetail'
 import { DeploymentDetailPage } from './pages/DeploymentDetail'
 import { HomePage } from './pages/Home'
 import { HowToPage } from './pages/HowTo'
@@ -23,7 +24,7 @@ function AuthExpiredBridge(): null {
   useEffect(() => {
     setAuthExpiredHandler((err) =>
       toast(
-        `Session expired${err.connection ? ` for ${err.connection}` : ''} — re-authenticate in Connections.`,
+        `Session expired${err.connection ? ` for ${err.connection}` : ''} — re-authenticate in Org Connections.`,
         'error'
       )
     )
@@ -42,6 +43,7 @@ export function App(): React.JSX.Element {
             <Route element={<AppShell />}>
               <Route index element={<HomePage />} />
               <Route path="connections" element={<ConnectionsPage />} />
+              <Route path="connections/:id" element={<OrgDetailPage />} />
               <Route path="extids" element={<RedirectHome />} />
               <Route path="history" element={<RedirectHome />} />
               <Route path="tools" element={<RedirectHome />} />

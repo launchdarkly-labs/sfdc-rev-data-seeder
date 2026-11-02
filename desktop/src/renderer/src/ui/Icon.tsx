@@ -114,21 +114,34 @@ export function Icon({
   )
 }
 
-/** The RDS mark: a brand-blue tile (the fill token, not the text one) with a seed sprouting into an arrow — source → target. */
+/**
+ * The RDS mark: a brand-blue tile (the fill token, not the text one) with data to data —
+ * an outlined source database feeding a filled target database (S70; the same drawing as
+ * build/icon.svg). The target's rim is drawn in the tile colour so it still reads as a cylinder.
+ */
 export function RdsMark({ size = 24 }: { size?: number }): React.JSX.Element {
   return (
     <svg className="rds-mark" width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
       <rect width="32" height="32" rx="8" fill="var(--accent-strong)" />
+      <ellipse cx="9" cy="10.5" rx="4.2" ry="1.8" fill="none" stroke="var(--on-accent)" strokeWidth="2" />
       <path
-        d="M9 22c0-5 3-9 8-10M17 12c3 0 5 1.5 6 4-3 .5-5-.5-6-4z"
+        d="M4.8 10.5v10c0 1 1.9 1.8 4.2 1.8s4.2-.8 4.2-1.8v-10"
         fill="none"
         stroke="var(--on-accent)"
-        strokeWidth="2.2"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M14.6 16h3M16.2 14.3l1.7 1.7-1.7 1.7"
+        fill="none"
+        stroke="var(--on-accent)"
+        strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="9" cy="23" r="2.2" fill="var(--on-accent)" />
-      <path d="M20 23h4m0 0-1.6-1.6M24 23l-1.6 1.6" fill="none" stroke="var(--on-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M18.8 10.5v10c0 1 1.9 1.8 4.2 1.8s4.2-.8 4.2-1.8v-10z" fill="var(--on-accent)" />
+      <ellipse cx="23" cy="10.5" rx="4.2" ry="1.8" fill="var(--on-accent)" />
+      <ellipse cx="23" cy="10.5" rx="4.2" ry="1.8" fill="none" stroke="var(--accent-strong)" strokeWidth="1.3" />
     </svg>
   )
 }

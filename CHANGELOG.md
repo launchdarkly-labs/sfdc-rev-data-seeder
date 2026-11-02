@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.2 — 2026-11-01
+
+### Org Connections (UAT S70)
+- **"Connections" is now "Org Connections"** in the nav, the page, the How To and the session-expired toast. The route is
+  unchanged.
+- **Filter by role.** A segmented control (All · Source · Target · Unassigned) replaces the "Hide unassigned" checkbox. A
+  production-pinned org counts as a source. The search box now also matches the org Id and the instance host (it already
+  matched the alias and username).
+- **Org detail page.** Click a connection's name for its identity facts (org Id, instance, alias, status, last verified),
+  an on-demand **External Id footprint** — which objects on that org carry `Data_Deployment_External_Id__c`, read live with
+  the same Tooling probe the engine uses (works on any role, production included; nothing is written) — a per-object
+  "Count" of rows that have a key, and the deployments that use the org as source or target.
+- **Lists scroll inside the page.** On Deployments and Org Connections the heading, toolbar and filters stay put while the
+  list scrolls. The "Add an org via OAuth" form is collapsed by default to keep the fixed head short.
+- **Deployments filter bar.** Search by name, org or status, and an "Updated within" control (any time · 7 · 30 · 90 days);
+  each card now shows its last-activity date.
+
+### Appearance
+- **New app icon and mark:** data to data — an outlined source database feeding a filled target database — on the
+  LD-blue tile. Same colours.
+
 ## 0.4.1 — 2026-10-21
 
 ### Appearance

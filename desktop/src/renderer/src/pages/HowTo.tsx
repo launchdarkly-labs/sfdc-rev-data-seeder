@@ -31,7 +31,7 @@ export function HowToPage(): React.JSX.Element {
       <ul>
         <li>
           <strong>The source org is never written to.</strong> Reads only — enforced in code, not by
-          convention. The production org pinned on <Link to="/connections">Connections</Link> is
+          convention. The production org pinned on <Link to="/connections">Org Connections</Link> is
           read-only too and can never be selected as a target; paste your own production Org Id
           there once.
         </li>
@@ -60,7 +60,7 @@ export function HowToPage(): React.JSX.Element {
       <h2>Adding an org</h2>
       <ol>
         <li>
-          Go to <Link to="/connections">Connections</Link>.
+          Go to <Link to="/connections">Org Connections</Link>.
         </li>
         <li>
           <strong>From the Salesforce CLI</strong> — click <em>Refresh from sf CLI</em>. Every org

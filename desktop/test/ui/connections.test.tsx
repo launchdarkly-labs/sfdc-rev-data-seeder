@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { render, screen, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { ConnectionsPage } from '../../src/renderer/src/pages/Connections'
 import { encodeRdsError, type OrgConnection, type OAuthBeginInput } from '../../src/shared/types'
 import { PROD_ORG_ID_PREFIX } from '../../src/shared/types'
@@ -65,9 +66,17 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+// S70: the page links each row to /connections/:id, so it needs a router.
+const renderPage = (): ReturnType<typeof render> =>
+  render(
+    <MemoryRouter>
+      <ConnectionsPage />
+    </MemoryRouter>
+  )
+
 describe('ConnectionsPage — dual-mode', () => {
   it('shows CLI vs OAuth pills and OAuth-only actions', async () => {
-    render(<ConnectionsPage />)
+    renderPage()
     expect(await screen.findByText('my-sandbox')).toBeInTheDocument()
     expect(screen.getByText('OAuth')).toBeInTheDocument()
     expect(screen.getByText('CLI')).toBeInTheDocument()
@@ -78,7 +87,7 @@ describe('ConnectionsPage — dual-mode', () => {
 
   it('signs in via OAuth with the production host and an optional label', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     await user.type(screen.getByLabelText('Label'), 'Prod org')
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
@@ -88,7 +97,7 @@ describe('ConnectionsPage — dual-mode', () => {
 
   it('requires a My Domain host when Custom is chosen', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     await user.selectOptions(screen.getByLabelText('Login host'), 'custom')
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
@@ -98,7 +107,7 @@ describe('ConnectionsPage — dual-mode', () => {
 
   it('normalizes a bare custom host to https and passes it through', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     await user.selectOptions(screen.getByLabelText('Login host'), 'custom')
     await user.type(screen.getByLabelText('My Domain host'), 'acme.my.salesforce.com')
@@ -109,7 +118,7 @@ describe('ConnectionsPage — dual-mode', () => {
 
   it('re-authenticates in place with the row login host + its id', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     await user.click(screen.getByRole('button', { name: 'Re-authenticate' }))
     await waitFor(() => expect(beginInput).not.toBeNull())
@@ -121,7 +130,7 @@ describe('ConnectionsPage — dual-mode', () => {
 
   it('disconnects the OAuth org and drops it from the list', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     await user.click(screen.getByRole('button', { name: 'Disconnect' }))
     await waitFor(() => expect(disconnected).toBe('uuid-1'))
@@ -135,7 +144,7 @@ describe('ConnectionsPage — dual-mode', () => {
       // Main-side wrapHandler encodes the envelope into the Error message.
       throw new Error(encodeRdsError({ code: 'INVALID_STATE', message: clean }))
     })
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     await user.click(screen.getByRole('button', { name: 'Disconnect' }))
     expect(await screen.findByText(clean)).toBeInTheDocument()
@@ -171,7 +180,7 @@ describe('ConnectionsPage — stale connections', () => {
 
   it('lists stale rows apart from live ones, with the reason, and removes on click', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('srcbox_911')
     // Stale rows are not in the main table's role selects (the other combobox
     // on the page is the OAuth login-host picker).
@@ -199,7 +208,7 @@ describe('ConnectionsPage — stale connections', () => {
         })
       )
     })
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('srcbox_911')
     await user.click(screen.getAllByRole('button', { name: 'Remove' })[0]!)
     await waitFor(() =>
@@ -212,7 +221,7 @@ describe('ConnectionsPage — stale connections', () => {
 describe('ConnectionsPage — role persistence feedback', () => {
   it('writes the role immediately and confirms with a transient Saved marker', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
 
     const selects = screen.getAllByRole('combobox', { name: '' })
@@ -236,7 +245,7 @@ describe('ConnectionsPage — role persistence feedback', () => {
         })
       )
     })
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
 
     const selects = screen.getAllByRole('combobox', { name: '' })
@@ -256,7 +265,7 @@ describe('ConnectionsPage — production pin', () => {
     (window as unknown as { rds: never }).rds
 
   it('shows the compiled default when nothing is stored', async () => {
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     const input = screen.getByLabelText('Production org Id') as HTMLInputElement
     await waitFor(() => expect(input.value).toBe(PROD_ORG_ID_PREFIX))
@@ -268,7 +277,7 @@ describe('ConnectionsPage — production pin', () => {
 
   it('shows a stored pin (normalised to 15 characters) and offers Reset', async () => {
     rds().settingsGet = vi.fn(async () => '00D000000Fake99EAA')
-    render(<ConnectionsPage />)
+    renderPage()
     const input = screen.getByLabelText('Production org Id') as HTMLInputElement
     await waitFor(() => expect(input.value).toBe('00D000000Fake99'))
     expect(await screen.findByText('Reset to default')).toBeInTheDocument()
@@ -276,7 +285,7 @@ describe('ConnectionsPage — production pin', () => {
 
   it('saves a new Org Id through IPC and re-reads the connection list', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     const input = screen.getByLabelText('Production org Id') as HTMLInputElement
     await waitFor(() => expect(input.value).toBe(PROD_ORG_ID_PREFIX))
@@ -294,7 +303,7 @@ describe('ConnectionsPage — production pin', () => {
 
   it('refuses a value that is not an Org Id without calling IPC', async () => {
     const user = userEvent.setup()
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     const input = screen.getByLabelText('Production org Id') as HTMLInputElement
     await waitFor(() => expect(input.value).toBe(PROD_ORG_ID_PREFIX))
@@ -312,7 +321,7 @@ describe('ConnectionsPage — production pin', () => {
     rds().settingsSet = vi.fn(async () => {
       throw new Error(encodeRdsError({ code: 'INVALID_STATE', message: 'A production pin must be a Salesforce Org Id.' }))
     })
-    render(<ConnectionsPage />)
+    renderPage()
     await screen.findByText('my-sandbox')
     const input = screen.getByLabelText('Production org Id') as HTMLInputElement
     await waitFor(() => expect(input.value).toBe(PROD_ORG_ID_PREFIX))
@@ -328,7 +337,7 @@ describe('ConnectionsPage — production pin', () => {
   it('Reset to default writes the compiled constant', async () => {
     const user = userEvent.setup()
     rds().settingsGet = vi.fn(async () => '00D000000Fake99')
-    render(<ConnectionsPage />)
+    renderPage()
     await user.click(await screen.findByText('Reset to default'))
     await waitFor(() => expect(rds().settingsSet).toHaveBeenCalledWith('prodOrgIdPrefix', PROD_ORG_ID_PREFIX))
     await waitFor(() => expect((screen.getByLabelText('Production org Id') as HTMLInputElement).value).toBe(PROD_ORG_ID_PREFIX))

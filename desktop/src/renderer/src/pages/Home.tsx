@@ -11,6 +11,13 @@ import { useToast } from '../ui/Toast'
 import type { DeploymentSummary, JobSummary } from '../../../shared/types'
 import { phaseLabel, statusLabel, statusTone } from '../../../shared/labels'
 import { canDeleteDeployment, canEditPlan, isDeployBusy } from '../../../shared/wizard'
+import {
+  activityAt,
+  DATE_FILTERS,
+  filterDeployments,
+  formatActivityDate,
+  type DateFilter
+} from '../../../shared/deploymentsFilter'
 import { firstLine } from './DeploymentDetail'
 import { WelcomeChecklist } from './placeholders'
 
@@ -49,6 +56,9 @@ export function HomePage(): React.JSX.Element {
     refetchRef.current = refetchDeployments
   })
   const onDeleted = useCallback((): void => refetchRef.current(), [])
+  // S70 (U-7): search + "updated within", the twin of the Org Connections filter bar.
+  const [query, setQuery] = useState('')
+  const [dateFilter, setDateFilter] = useState<DateFilter>('any')
 
   const runDemo = async (): Promise<void> => {
     await window.rds.jobDemo()
@@ -65,12 +75,20 @@ export function HomePage(): React.JSX.Element {
   }
   // Everything else is its own card: template runs, analyses, demos, and a
   // finished deploy job whose deployment is not (yet) in the list. Newest first.
+  // The query applies to their titles too; the date filter is for deployments
+  // only (session jobs are by definition recent).
+  const q = query.trim().toLowerCase()
   const standalone = jobs
     .filter((job) => !(job.deploymentId && job.status === 'running' && listed.has(job.deploymentId)))
+    .filter((job) => q === '' || job.title.toLowerCase().includes(q))
     .reverse()
+  const shownDeployments = filterDeployments(deployments ?? [], { query, date: dateFilter })
+  const filtering = q !== '' || dateFilter !== 'any'
 
+  // S70 (U-5): heading + toolbar stay put; the activity list scrolls on its own.
   return (
-    <>
+    <div className="page-fixed">
+    <div className="page-head">
       <h1>Deployments</h1>
       <p className="sub">Every deployment and this session&rsquo;s runs, newest first.</p>
 
@@ -84,7 +102,31 @@ export function HomePage(): React.JSX.Element {
           </button>
         )}
       </div>
+      {deployments && deployments.length > 0 && (
+        <div className="toolbar filter-bar">
+          <input
+            className="text-input"
+            type="search"
+            aria-label="Filter deployments"
+            placeholder="Filter by name, org or status…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <select aria-label="Updated within" value={dateFilter} onChange={(e) => setDateFilter(e.target.value as DateFilter)}>
+            {DATE_FILTERS.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+          <span className="muted">
+            {shownDeployments.length} of {deployments.length}
+          </span>
+        </div>
+      )}
+    </div>
 
+    <div className="scroll-region">
       {listError && <div className="banner">{listError.message}</div>}
       {firstRun && <WelcomeChecklist orgCount={0} deploymentCount={0} />}
       {!firstRun && deployments && deployments.length === 0 && (
@@ -92,17 +134,21 @@ export function HomePage(): React.JSX.Element {
           No deployments yet — <Link to="/deployments/new">create one</Link>.
         </p>
       )}
-      {(standalone.length > 0 || (deployments && deployments.length > 0)) && (
+      {filtering && standalone.length === 0 && shownDeployments.length === 0 && (deployments?.length ?? 0) > 0 && (
+        <p className="muted">No deployments match the filter — clear the search or choose “Any time”.</p>
+      )}
+      {(standalone.length > 0 || shownDeployments.length > 0) && (
         <div className="activity-list" data-testid="activity">
           {standalone.map((job) => (
             <JobCard key={job.id} job={job} />
           ))}
-          {(deployments ?? []).map((d) => (
+          {shownDeployments.map((d) => (
             <DeploymentCard key={d.id} d={d} job={attached.get(String(d.id))} onDeleted={onDeleted} />
           ))}
         </div>
       )}
-    </>
+    </div>
+    </div>
   )
 }
 
@@ -288,6 +334,12 @@ const DeploymentCard = memo(function DeploymentCard({
             {d.sourceLabel} → {d.targetLabel}
             {d.totalObjects != null && ` · ${d.totalObjects} object${d.totalObjects === 1 ? '' : 's'}`}
             {d.totalRecords != null && ` · ${d.totalRecords.toLocaleString()} records`}
+            {activityAt(d) > 0 && (
+              <span className="card-date" title={new Date(activityAt(d)).toLocaleString()}>
+                {' · '}
+                {formatActivityDate(activityAt(d))}
+              </span>
+            )}
           </span>
           {busy && phase && <span className="card-phase">{phaseLabel(phase)}</span>}
         </span>

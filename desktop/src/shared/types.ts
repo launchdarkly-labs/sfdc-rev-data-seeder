@@ -102,6 +102,14 @@ export interface VerifyResult {
   error?: string
 }
 
+/** S70 (U-4): which objects on ONE org carry the seeder's External-Id field (read-only Tooling probe). */
+export interface OrgExtIdFootprint {
+  fieldName: string
+  objects: Array<{ objectName: string; isJunction: boolean }>
+  /** Epoch ms when the probe ran — it is live, not cached. */
+  checkedAt: number
+}
+
 /** Slim field describe — the same shape the Apex app caches (SchemaService.FieldInfo). */
 export interface FieldInfo {
   apiName: string
@@ -555,6 +563,8 @@ export const IPC = {
   setOrgRole: 'rds:setOrgRole',
   verifyOrg: 'rds:verifyOrg',
   orgRemove: 'rds:org.remove',
+  orgExtIdFootprint: 'rds:org.extIdFootprint',
+  orgExtIdCount: 'rds:org.extIdCount',
   describeGlobal: 'rds:describeGlobal',
   describeObject: 'rds:describeObject',
   jobList: 'rds:job.list',
@@ -769,6 +779,10 @@ export interface RdsApi {
   verifyOrg(connectionId: string): Promise<VerifyResult>
   /** Remove a connection row (CLI or OAuth; OAuth also revokes + wipes tokens). Refuses if a deployment references it. */
   orgRemove(connectionId: string): Promise<OrgConnection[]>
+  /** S70 (U-4): live, read-only — objects on this org that carry the External-Id field. Any role, prod included. */
+  orgExtIdFootprint(connectionId: string): Promise<OrgExtIdFootprint>
+  /** S70 (U-4): rows on one object with the External-Id field populated (one COUNT() query, on demand). */
+  orgExtIdCount(connectionId: string, objectName: string): Promise<number>
   /**
    * Start an interactive OAuth sign-in (system browser + PKCE loopback). Creates
    * a new connection (or re-authenticates `reauthConnectionId`) and returns the

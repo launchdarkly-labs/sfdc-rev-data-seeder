@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { OrgConnection, OrgRole, VerifyResult } from '../../../shared/types'
 import { LOGIN_HOSTS } from '../../../shared/types'
+import { filterConnections, ROLE_FILTERS, type RoleFilter } from '../../../shared/connectionsFilter'
 import {
   DEFAULT_PROD_ORG_ID_PREFIX,
   normalizeProdOrgIdPrefix,
@@ -25,8 +27,9 @@ export function ConnectionsPage(): React.JSX.Element {
   // S64 (P2): a missing `sf` CLI gets guidance, not a raw spawn error.
   const [cliMissing, setCliMissing] = useState(false)
   // S64 (P2): the org list grows with every sandbox refresh alias — filter it.
+  // S70 (U-2/U-3): one query over alias/username/org Id/host, one role control.
   const [query, setQuery] = useState('')
-  const [hideUnassigned, setHideUnassigned] = useState(false)
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all')
   const [verifying, setVerifying] = useState<Record<string, boolean>>({})
   const [verifyResults, setVerifyResults] = useState<Record<string, VerifyResult>>({})
 
@@ -230,19 +233,19 @@ export function ConnectionsPage(): React.JSX.Element {
     o.supersededBy != null || o.cliStatus === 'Not in CLI'
   const liveOrgs = orgs.filter((o) => !isStale(o))
   const staleOrgs = orgs.filter(isStale)
-  const q = query.trim().toLowerCase()
-  const shownOrgs = liveOrgs.filter(
-    (o) =>
-      (!hideUnassigned || o.role !== 'unassigned' || o.prodPinned) &&
-      (q === '' || o.label.toLowerCase().includes(q) || (o.username ?? '').toLowerCase().includes(q))
-  )
+  const shownOrgs = filterConnections(liveOrgs, { query, role: roleFilter })
 
+  // S70 (U-5): the heading, toolbar, add-org form and filter stay put; only the
+  // list region scrolls. The OAuth form is a closed <details> so the fixed head
+  // stays short on an 840px window.
   return (
-    <>
-      <h1>Connections</h1>
+    <div className="page-fixed">
+    <div className="page-head">
+      <h1>Org Connections</h1>
       <p className="sub">
         Use orgs from your Salesforce CLI, or add one directly with OAuth (opens your browser).
         Assign roles to use them in deployments — source orgs are read-only by design; production orgs are pinned read-only.
+        Click a connection for its details and External Id footprint.
       </p>
 
       {cliMissing && (
@@ -264,8 +267,10 @@ export function ConnectionsPage(): React.JSX.Element {
         </button>
       </div>
 
-      <div className="oauth-add">
-        <strong>Add an org via OAuth</strong>
+      <details className="oauth-add">
+        <summary>
+          <strong>Add an org via OAuth</strong>
+        </summary>
         <div className="oauth-add-row">
           <select
             aria-label="Login host"
@@ -294,26 +299,37 @@ export function ConnectionsPage(): React.JSX.Element {
             {signingIn ? 'Waiting for browser…' : 'Sign in'}
           </button>
         </div>
-      </div>
+      </details>
 
       <div className="toolbar filter-bar">
         <input
           className="text-input"
           type="search"
           aria-label="Filter connections"
-          placeholder="Filter by alias or username…"
+          placeholder="Filter by alias, username, org Id or host…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <label className="check inline">
-          <input type="checkbox" checked={hideUnassigned} onChange={(e) => setHideUnassigned(e.target.checked)} /> Hide
-          unassigned
-        </label>
+        <div className="seg" role="group" aria-label="Role">
+          {ROLE_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              className={`seg-btn${roleFilter === f.value ? ' active' : ''}`}
+              aria-pressed={roleFilter === f.value}
+              onClick={() => setRoleFilter(f.value)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         <span className="muted">
           {shownOrgs.length} of {liveOrgs.length}
         </span>
       </div>
+    </div>
 
+    <div className="scroll-region">
       <div className="table-wrap">
       <table className="table">
         <thead>
@@ -333,7 +349,7 @@ export function ConnectionsPage(): React.JSX.Element {
             return (
               <tr key={o.id}>
                 <td>
-                  {o.label}
+                  <Link to={`/connections/${encodeURIComponent(o.id)}`}>{o.label}</Link>
                   <span className={`pill ml-2 ${isOAuth ? 'oauth' : 'cli'}`}>
                     {isOAuth ? 'OAuth' : 'CLI'}
                   </span>
@@ -436,7 +452,7 @@ export function ConnectionsPage(): React.JSX.Element {
               <td colSpan={5}>
                 <EmptyState
                   title="No connections match the filter."
-                  hint="Clear the filter or untick “Hide unassigned”."
+                  hint="Clear the search or choose “All” roles."
                 />
               </td>
             </tr>
@@ -536,6 +552,7 @@ export function ConnectionsPage(): React.JSX.Element {
           </table>
         </details>
       )}
-    </>
+    </div>
+    </div>
   )
 }

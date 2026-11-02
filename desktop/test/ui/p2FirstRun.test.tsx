@@ -163,14 +163,19 @@ describe('Connections when the Salesforce CLI is missing', () => {
         throw new Error(encodeRdsError({ code: 'CLI_MISSING', message: 'The Salesforce CLI (sf) was not found on this Mac.' }))
       })
     })
-    render(<ConnectionsPage />)
+    render(
+      <MemoryRouter>
+        <ConnectionsPage />
+      </MemoryRouter>
+    )
     const banner = await screen.findByTestId('cli-missing')
     expect(banner).toHaveTextContent(/Salesforce CLI was not found/)
     expect(within(banner).getByRole('link')).toHaveAttribute('href', expect.stringContaining('salesforcecli'))
     expect(screen.queryByText(/ENOENT/)).not.toBeInTheDocument()
   })
 
-  it('filters the list by alias or username and can hide unassigned rows', async () => {
+  // S70 (U-2/U-3): the role control replaced "Hide unassigned"; the search also covers org Id + host.
+  it('filters the list by alias, username, org Id or host, and by role', async () => {
     const user = userEvent.setup()
     const row = (over: Partial<OrgConnection>): OrgConnection => ({
       id: 'a',
@@ -196,18 +201,38 @@ describe('Connections when the Salesforce CLI is missing', () => {
       row({ id: 'spare', label: 'spare', role: 'unassigned', username: 'me@acme.spare' })
     ]
     setRds({ listOrgs: vi.fn(async () => rows), refreshOrgs: vi.fn(async () => rows) })
-    render(<ConnectionsPage />)
+    render(
+      <MemoryRouter>
+        <ConnectionsPage />
+      </MemoryRouter>
+    )
     await screen.findByText('spare')
     expect(screen.getByText('3 of 3')).toBeInTheDocument()
+    // each row's name links to its detail page
+    expect(screen.getByRole('link', { name: 'spare' })).toHaveAttribute('href', '/connections/spare')
 
     await user.type(screen.getByLabelText('Filter connections'), 'acme.tgt')
     expect(screen.getByText('1 of 3')).toBeInTheDocument()
     expect(screen.queryByText('spare')).not.toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('Filter connections'))
-    await user.click(screen.getByLabelText(/Hide unassigned/))
-    expect(screen.getByText('2 of 3')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Filter connections'), '00dXXX')
+    expect(screen.getByText('3 of 3')).toBeInTheDocument()
+
+    await user.clear(screen.getByLabelText('Filter connections'))
+    const roles = screen.getByRole('group', { name: 'Role' })
+    await user.click(within(roles).getByRole('button', { name: 'Source' }))
+    expect(screen.getByText('1 of 3')).toBeInTheDocument()
+    expect(screen.getByText('srcbox_911')).toBeInTheDocument()
     expect(screen.queryByText('spare')).not.toBeInTheDocument()
+    expect(within(roles).getByRole('button', { name: 'Source' })).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(within(roles).getByRole('button', { name: 'Unassigned' }))
+    expect(screen.getByText('1 of 3')).toBeInTheDocument()
+    expect(screen.getByText('spare')).toBeInTheDocument()
+
+    await user.click(within(roles).getByRole('button', { name: 'All' }))
+    expect(screen.getByText('3 of 3')).toBeInTheDocument()
   })
 })
 
@@ -247,7 +272,7 @@ describe('Home first run', () => {
     setRds({ draftList: async () => [], listOrgs: async () => [], jobList: async () => [], onJobEvent: () => () => undefined })
     render(providers('/', <Route path="/" element={<HomePage />} />))
     const welcome = await screen.findByTestId('welcome')
-    expect(within(welcome).getByRole('link', { name: 'Open Connections' })).toHaveAttribute('href', '/connections')
+    expect(within(welcome).getByRole('link', { name: 'Open Org Connections' })).toHaveAttribute('href', '/connections')
     expect(screen.queryByText(/create one/)).not.toBeInTheDocument()
   })
 

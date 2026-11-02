@@ -1,0 +1,102 @@
+/* ── S70: Org Connections + scrolling list regions (UAT U-1 … U-5) ──────────
+   `.content` keeps `overflow: auto` as the fallback scroller; a page that opts
+   in with `.page-fixed` pins its head and scrolls only `.scroll-region`.
+   `height: 100%` resolves against `.content`'s content box (the flex-stretched
+   100vh minus its padding), so the region fills the window exactly. */
+.page-fixed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.page-head {
+  flex: none;
+}
+.scroll-region {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: var(--space-2);
+}
+
+/* Deployments: the last-activity date on each card (the date filter acts on it). */
+.card-date {
+  white-space: nowrap;
+}
+
+/* Role filter: a segmented control (All · Source · Target · Unassigned). */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.seg-btn {
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 0;
+  padding: 6px 12px;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.seg-btn + .seg-btn {
+  border-left: 1px solid var(--border);
+}
+.seg-btn:hover:not(.active) {
+  color: var(--text);
+}
+.seg-btn.active {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+/* The OAuth add-org card is now a closed <details> so the fixed head stays short. */
+.oauth-add > summary {
+  cursor: pointer;
+}
+
+/* Org detail page */
+.back-link {
+  display: inline-block;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin-bottom: var(--space-3);
+}
+.org-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-4) 0 var(--space-5);
+  max-width: 760px;
+}
+.org-facts dt {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.org-facts dd {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.org-section {
+  margin: var(--space-5) 0;
+  padding: var(--space-5);
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+.org-section h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-lg);
+}
+.org-section .sub {
+  margin-bottom: var(--space-3);
+}
+.footprint-meta {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin: var(--space-3) 0;
+}
+.count-cell {
+  min-width: 9ch;
+}

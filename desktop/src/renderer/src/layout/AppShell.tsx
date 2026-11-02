@@ -26,7 +26,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Deployments', icon: 'deployments', end: true, alsoActive: (p) => p.startsWith('/deployments') },
   { to: '/templates', label: 'Templates', icon: 'templates' },
-  { to: '/connections', label: 'Connections', icon: 'connections' },
+  { to: '/connections', label: 'Org Connections', icon: 'connections' },
   { to: '/howto', label: 'How To', icon: 'help' },
   { to: '/settings', label: 'Settings', icon: 'settings' }
 ]

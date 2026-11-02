@@ -12,6 +12,9 @@ const api: RdsApi = {
     ipcRenderer.invoke(IPC.setOrgRole, connectionId, role),
   verifyOrg: (connectionId: string) => ipcRenderer.invoke(IPC.verifyOrg, connectionId),
   orgRemove: (connectionId: string) => ipcRenderer.invoke(IPC.orgRemove, connectionId),
+  orgExtIdFootprint: (connectionId: string) => ipcRenderer.invoke(IPC.orgExtIdFootprint, connectionId),
+  orgExtIdCount: (connectionId: string, objectName: string) =>
+    ipcRenderer.invoke(IPC.orgExtIdCount, connectionId, objectName),
   oauthBegin: (input: OAuthBeginInput) => ipcRenderer.invoke(IPC.oauthBegin, input),
   oauthDisconnect: (connectionId: string) => ipcRenderer.invoke(IPC.oauthDisconnect, connectionId),
   readinessCheck: (deploymentId: number) => ipcRenderer.invoke(IPC.readinessCheck, deploymentId),

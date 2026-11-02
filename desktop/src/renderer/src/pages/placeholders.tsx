@@ -28,7 +28,7 @@ export function WelcomeChecklist({
       title: 'Connect your orgs',
       body: 'Sign in to each org with the Salesforce CLI (sf org login web -a <alias>), then refresh the list here. One org will be the read-only source, another the target.',
       to: '/connections',
-      cta: 'Open Connections'
+      cta: 'Open Org Connections'
     },
     {
       done: deploymentCount > 0,

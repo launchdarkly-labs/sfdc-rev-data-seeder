@@ -12,6 +12,7 @@ import './styles/p3-components.css'
 import './styles/p3-nav-home.css'
 import './styles/p3-plan-copy.css'
 import './styles/p5-monitor.css'
+import './styles/p7-org-connections.css'
 
 import { initTheme } from './theme'
 

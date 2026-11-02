@@ -36,6 +36,7 @@ import { suggestMappings } from './services/mappingSuggest'
 import { assessObject, rollup, type ObjectReadiness } from './engine/readiness'
 import { isKnownJunction } from './engine/junctionDetector'
 import { createExtIdField } from './services/extIdField'
+import { orgExtIdFootprint, orgExtIdPopulatedCount } from './services/orgExtIdFootprint'
 import { provisionExtIdFields, RDS_PERMISSION_SET } from './services/extIdProvision'
 import { makeAnalysisIo } from './services/analysisIo'
 import { analyzeDeployment, type AnalysisInput } from './engine/analysis'
@@ -140,6 +141,21 @@ export function registerIpc(store: Store, jobs: JobManager, vault: TokenVault): 
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
     })
+  )
+
+  // S70 (U-4) — Org Connections detail: the External-Id footprint of ONE org.
+  // Read-only Tooling + COUNT() queries, so no role override and no write gate;
+  // a prod-pinned org answers like any other. Errors (expired session, no
+  // Tooling access) surface as typed errors for the page to render inline.
+  ipcMain.handle(
+    IPC.orgExtIdFootprint,
+    wrapHandler(async (_e, connectionId: string) => orgExtIdFootprint(await connectById(connectionId)))
+  )
+  ipcMain.handle(
+    IPC.orgExtIdCount,
+    wrapHandler(async (_e, connectionId: string, objectName: string) =>
+      orgExtIdPopulatedCount(await connectById(connectionId), objectName)
+    )
   )
 
   // ── OAuth sign-in (A7) ─────────────────────────────────────────────────

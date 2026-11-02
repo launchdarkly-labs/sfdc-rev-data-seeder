@@ -116,7 +116,7 @@ describe('routing', () => {
   it('renders the sidebar nav on every shell route', () => {
     renderAt('#/')
     expect(screen.getByText('Rev Data Seeder')).toBeInTheDocument()
-    expect(within(nav()).getByRole('link', { name: 'Connections' })).toHaveAttribute('href', '#/connections')
+    expect(within(nav()).getByRole('link', { name: 'Org Connections' })).toHaveAttribute('href', '#/connections')
   })
 
   // S64 P3 (ux IA-3): the nav lists PLACES. "New deployment" is an action and is a
@@ -137,7 +137,7 @@ describe('routing', () => {
       .getAllByRole('link')
       .filter((l) => l.classList.contains('nav-item'))
       .map((l) => l.textContent)
-    expect(labels).toEqual(['Deployments', 'Templates', 'Connections', 'How To', 'Settings'])
+    expect(labels).toEqual(['Deployments', 'Templates', 'Org Connections', 'How To', 'Settings'])
     renderAt('#/howto')
     expect(screen.getByRole('heading', { name: 'Templates: post-refresh and data seed' })).toBeInTheDocument()
     expect(screen.getByText(/Post-refresh automation changes are PERSISTENT/)).toBeInTheDocument()

@@ -299,7 +299,7 @@ function RunForm({
           </select>
           {targets.length === 0 && (
             <span className="muted">
-              No target orgs — give a sandbox the Target role on <Link to="/connections">Connections</Link>.
+              No target orgs — give a sandbox the Target role on <Link to="/connections">Org Connections</Link>.
             </span>
           )}
         </label>

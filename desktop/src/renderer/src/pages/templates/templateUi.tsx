@@ -79,7 +79,7 @@ export function ReadFromPicker({
         </div>
         {options.length === 0 && (
           <span className="muted">
-            No {scope === 'all' ? '' : `${scope} `}orgs yet — assign a role on the Connections page.
+            No {scope === 'all' ? '' : `${scope} `}orgs yet — assign a role on the Org Connections page.
           </span>
         )}
       </label>
