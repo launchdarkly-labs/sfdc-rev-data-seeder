@@ -328,7 +328,8 @@ const DeploymentCard = memo(function DeploymentCard({
     <div className="job-card" data-testid={`deployment-${d.id}`}>
       <div className="job-card-head">
         <span className="card-title">
-          <Badge>Deployment</Badge>
+          {/* S72: the kind badge names how this deployment started (Setup cards carry no record counts). */}
+          <Badge>{d.kind === 'sandboxSetup' ? 'Sandbox setup' : 'Deployment'}</Badge>
           <Link to={cta.to}>{d.name}</Link>
           <span className="card-meta">
             {d.sourceLabel} → {d.targetLabel}

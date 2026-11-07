@@ -140,6 +140,7 @@ function draft(overrides: Partial<DraftDetail> = {}): DraftDetail {
     targetConnectionId: 'sb1',
     sourceLabel: 'srcbox',
     targetLabel: 'sb1',
+    kind: 'data',
     step: 'orgs',
     config: emptyWizardConfig(),
     status: 'Draft',

@@ -4,9 +4,15 @@
  * it verbatim as JSON on the deployment row.
  */
 import type { AutomationItem, AutomationSnapshot } from './types'
+import type { DeploymentKind } from './types'
 import { automationItemKey } from './types'
 import { canHostExtIdField } from './extIdCapability'
 import type { TemplateRunSteps } from './templates/types'
+
+/** S72: the deployment-kind parameter shape (a full row or just `{ kind }`). */
+export interface DeploymentKindRef {
+  kind: DeploymentKind
+}
 
 /**
  * S49 (UI-2a): 'objects' was split out of 'scope'. `scope` used to carry BOTH
@@ -16,6 +22,12 @@ import type { TemplateRunSteps } from './templates/types'
  * inserting a step shifts every downstream index — `stepCapForStatus`, the nav
  * render, the `:step` route, and every `stepIndex` comparison move with it by
  * construction. That is exactly why the order lives in ONE place.
+ *
+ * S72: 'review' is the data-less sandbox-setup's last step (stage strip +
+ * attestation + Run setup). It sits after 'plan' in the ORDER so that no
+ * existing draft's saved step ids shift; the per-kind step lists
+ * (`wizardStepsFor`) choose which subset renders, so its position in this
+ * tuple is only "last".
  */
 export const WIZARD_STEPS = [
   'orgs',
@@ -29,7 +41,9 @@ export const WIZARD_STEPS = [
   // stays 'templates' so drafts saved at that step keep resolving.
   'templates',
   'summary',
-  'plan'
+  'plan',
+  // S72: the data-less sandbox setup's terminal step (never shown to a 'data' deployment).
+  'review'
 ] as const
 
 export type WizardStep = (typeof WIZARD_STEPS)[number]
@@ -37,6 +51,7 @@ export type WizardStep = (typeof WIZARD_STEPS)[number]
 /**
  * S64 (P2): ONE label table drives the step nav, each step's heading and every
  * "Next: …" button, so the three can never disagree again (ux IA-5).
+ * S72: 'templates' relabels to "Setup" for a sandbox setup (same step id).
  */
 export const STEP_LABELS: Record<WizardStep, string> = {
   orgs: 'Orgs',
@@ -47,12 +62,28 @@ export const STEP_LABELS: Record<WizardStep, string> = {
   fields: 'Fields',
   templates: 'Stages',
   summary: 'Summary',
-  plan: 'Plan'
+  plan: 'Plan',
+  review: 'Review'
+}
+
+/** S72: the label for a step in a given kind's wizard ('templates' reads "Setup" for a setup). */
+export function stepLabel(step: WizardStep, kind: Pick<DeploymentKindRef, 'kind'>): string {
+  if (step === 'templates' && kind.kind === 'sandboxSetup') return 'Setup'
+  return STEP_LABELS[step]
 }
 
 /** "Next: <label>" for a button that goes to `step`. */
 export function nextLabel(step: WizardStep, suffix?: string): string {
   return `Next: ${STEP_LABELS[step]}${suffix ? ` ${suffix}` : ''}`
+}
+
+/** S72: "Next: <label>" for a kind-aware wizard (the Setup step relabels). */
+export function nextLabelFor(
+  step: WizardStep,
+  kind: Pick<DeploymentKindRef, 'kind'>,
+  suffix?: string
+): string {
+  return `Next: ${stepLabel(step, kind)}${suffix ? ` ${suffix}` : ''}`
 }
 
 export function stepIndex(step: WizardStep): number {
@@ -64,12 +95,23 @@ export function stepIndex(step: WizardStep): number {
  * way forward is a fresh analysis (mirrors the Apex app's stalled-resume cap,
  * inventory 5.0.3). Everything else — including a Completed / Failed /
  * Cancelled deployment, which may be fixed up and re-deployed (upsert is
- * idempotent) — may reach the final Plan step. Statuses that mean a run is
- * LIVE (`isDeployBusy`) are not a cap question: the wizard shell refuses to
+ * idempotent) — may reach its kind's final step ('plan' for data, 'review'
+ * for a data-less setup — S72). Statuses that mean a run is LIVE
+ * (`isDeployBusy`) are not a cap question: the wizard shell refuses to
  * open them at all and main refuses draft writes (S46 D1).
  */
-export function stepCapForStatus(status: string): WizardStep {
-  return status === 'Stalled' ? 'fields' : 'plan'
+export function stepCapForStatus(
+  status: string,
+  kind: DeploymentKind = 'data',
+  config: Pick<WizardConfig, 'includeData'> = {}
+): WizardStep {
+  // S73: only the DATA-LESS setup ends at Review / re-opens at Setup when
+  // stalled; a setup WITH its data stage has a plan and caps like a data
+  // deployment (its Setup step is before the data steps, so a 'fields' cap
+  // still admits it).
+  const dataless = isDatalessSetup(kind, config)
+  if (status === 'Stalled') return dataless ? 'templates' : 'fields'
+  return dataless ? 'review' : 'plan'
 }
 
 /**
@@ -110,17 +152,38 @@ export function isDeployFinished(status: string): boolean {
   )
 }
 
-/** Clamp a requested step to the cap for a deployment's status. */
-export function clampStep(step: WizardStep, status: string): WizardStep {
-  const cap = stepCapForStatus(status)
+/**
+ * Clamp a requested step to the cap for a deployment's status (S72: the cap is
+ * kind-aware — 'review' for a data-less setup, 'plan' otherwise).
+ *
+ * NOTE: this is a STATUS clamp only. A step can be within the cap and still not
+ * exist for the deployment's kind (a stale 'summary' bookmark on a now-data-less
+ * setup — 'review' sits after 'summary' in WIZARD_STEPS, so the index check
+ * cannot catch it). The kind-membership fallback lives in the wizard shell,
+ * where the config is; see `stepAllowedFor`.
+ */
+export function clampStep(
+  step: WizardStep,
+  status: string,
+  kind: DeploymentKind = 'data',
+  config: Pick<WizardConfig, 'useExternalIds' | 'includeData'> = {}
+): WizardStep {
+  const cap = stepCapForStatus(status, kind, config)
+  // S73: compare positions in THIS KIND's order, not in WIZARD_STEPS — a
+  // sandbox setup's Setup step sits second, before the data steps, so an
+  // index into the base tuple (where 'templates' is seventh) would clamp it
+  // behind a 'fields' cap it is actually in front of.
+  const order = wizardStepsFor(kind, config)
+  const i = order.indexOf(step)
+  const c = order.indexOf(cap)
   // An unrecognised step (hand-edited URL, a stale bookmark from a wizard
-  // shape that no longer exists) gives stepIndex === -1, which is not > cap —
-  // so it used to be returned verbatim and the render switch matched nothing,
-  // leaving a wizard with a header, a nav and an EMPTY body. Fall back to the
-  // first step instead. S49 made this reachable in a new way by reshaping the
-  // step list, so it is fixed here rather than left as a trap.
+  // shape that no longer exists) used to be returned verbatim and the render
+  // switch matched nothing, leaving a wizard with a header, a nav and an EMPTY
+  // body. Fall back to the first step instead. (A step that exists but is not
+  // in this kind's list is the shell's `stepAllowedFor` fallback.)
   if (stepIndex(step) < 0) return WIZARD_STEPS[0]
-  return stepIndex(step) > stepIndex(cap) ? cap : step
+  if (i < 0 || c < 0) return step
+  return i > c ? cap : step
 }
 
 /** Deployments in these statuses may be deleted from the UI. */
@@ -250,6 +313,14 @@ export interface WizardConfig {
    * `useExternalIds`) and read at every start, so "Rerun" replays the whole sequence.
    */
   templateSteps?: TemplateStepsConfig
+  /**
+   * S72 (D2): a sandbox setup's DATA stage. True (the seeded default) = the
+   * setup ends with the full data wizard (Objects → … → Plan); false = the run
+   * is template stages only (wizard: orgs → Setup → Review; no analysis, no
+   * plan row, no deploy_runs row). Only meaningful for kind 'sandboxSetup';
+   * readers default ?? true so a 'data' deployment is unaffected.
+   */
+  includeData?: boolean
 }
 
 // ───────────────────────── S62 (U-2) — template stages ─────────────────────────
@@ -285,6 +356,85 @@ export function hasTemplateSteps(config: Pick<WizardConfig, 'templateSteps'>): b
 export function stageLabels(config: Pick<WizardConfig, 'templateSteps'>): string[] {
   const t = templateStepsOf(config)
   return [...t.before.map((s) => s.name), 'Data deployment', ...t.after.map((s) => s.name)]
+}
+
+/**
+ * S72 — every stage in run order for EITHER kind: a data-less setup has no
+ * data stage, so its sequence is the templates alone.
+ */
+export function stageLabelsFor(
+  config: Pick<WizardConfig, 'templateSteps' | 'includeData'>,
+  kind: DeploymentKind
+): string[] {
+  const t = templateStepsOf(config)
+  if (isDatalessSetup(kind, config)) return [...t.before.map((s) => s.name), ...t.after.map((s) => s.name)]
+  return stageLabels(config)
+}
+
+// ──────────────────── S72 — the S71 duplicate-reference trap ────────────────────
+
+/** A seed template referenced both as its own stage AND nested in a post-refresh stage. */
+export interface DuplicateStageRef {
+  seedName: string
+  /** The template whose own stage references this seed. */
+  ownStage: string
+  /** The post-refresh stage with the seed ticked inside it. */
+  nestedIn: string
+}
+
+/**
+ * S72 — the S71 trap, caught from Jack's screenshots before deployment 60: a
+ * seed template placed as its own BEFORE stage AND ticked inside a post-refresh
+ * BEFORE stage runs TWICE. The second run's seed preflight finds the 39 objects
+ * non-empty (composed stages run purge:false / resume:false) → blocked → every
+ * later stage recorded 'skipped'. The Plan step's "N stages" check cannot see
+ * it because both references are legal individually.
+ *
+ * Pure: takes the placement config plus each post-refresh stage's embedded
+ * seeds (name + ticked state). Returns one row per duplicated seed. The Setup
+ * step and the review/Plan step render this as a will-fail block (S62-1
+ * pattern) with an explicit acknowledgement tick.
+ */
+export function duplicateStageReferences(
+  config: Pick<WizardConfig, 'templateSteps'>,
+  /** templateId → the post-refresh payload's embedded seed names (tick state from the ref's steps). */
+  postRefreshSeeds: ReadonlyMap<number, ReadonlyArray<string>>
+): DuplicateStageRef[] {
+  const steps = templateStepsOf(config)
+  const out: DuplicateStageRef[] = []
+  // name → the stage (any bucket) whose template IS that seed template
+  const seedStageByName = new Map<string, TemplateStepRef>()
+  for (const s of [...steps.before, ...steps.after]) {
+    if (s.kind === 'seed') seedStageByName.set(s.name, s)
+  }
+  for (const pr of [...steps.before, ...steps.after]) {
+    if (pr.kind !== 'postRefresh') continue
+    const embedded = postRefreshSeeds.get(pr.templateId) ?? []
+    const ticked = new Set(
+      pr.steps.seeds.filter((s) => embedded.includes(s.name)).map((s) => s.name)
+    )
+    for (const name of ticked) {
+      const own = seedStageByName.get(name)
+      // Same template twice (own stage + nested) — the trap. A seed nested in
+      // a DIFFERENT post-refresh stage only (no own stage) is fine; two
+      // post-refresh stages sharing a seed is caught by the same name set.
+      if (own && own.templateId !== pr.templateId) {
+        out.push({ seedName: name, ownStage: own.name, nestedIn: pr.name })
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * S72 — a sandbox setup must run at least one template stage (the type exists
+ * to run them); a data deployment is free to stage none.
+ */
+export function setupMissingStages(
+  kind: DeploymentKind,
+  config: Pick<WizardConfig, 'templateSteps'>
+): boolean {
+  return kind === 'sandboxSetup' && !hasTemplateSteps(config)
 }
 
 /**
@@ -333,6 +483,77 @@ export const KEYLESS_CAUTION = `${KEYLESS_CAUTION_LEAD} ${KEYLESS_CAUTION_MORE}`
 /** The steps the wizard offers for this config — keyless drafts never see Readiness (S61 U-5). */
 export function visibleWizardSteps(config: Pick<WizardConfig, 'useExternalIds'>): WizardStep[] {
   return isKeyless(config) ? WIZARD_STEPS.filter((s) => s !== 'readiness') : [...WIZARD_STEPS]
+}
+
+/**
+ * S72 — the steps the wizard offers for a deployment of a given KIND:
+ *
+ *  - 'data' (or sandboxSetup WITH its data stage): today's list, with the
+ *    Stages ('templates') step in its S64 position. For a sandbox setup the
+ *    Stages step is REQUIRED (at least one stage must be placed) — enforced on
+ *    the step itself and at run start, not by hiding steps.
+ *  - 'sandboxSetup' data-less (includeData false): orgs → setup(templates) →
+ *    review. No Objects/Scope/Readiness/Mappings/Fields/Summary — there is no
+ *    data plan, no analysis, no deploy_runs row.
+ *
+ * Keyless's Readiness drop (S61 U-5) applies inside the data-bearing lists.
+ * Order comes from WIZARD_STEPS (the single ordering source) — the subsets
+ * only choose membership.
+ */
+export function wizardStepsFor(
+  kind: DeploymentKind,
+  config: Pick<WizardConfig, 'useExternalIds' | 'includeData'>
+): WizardStep[] {
+  if (kind === 'sandboxSetup' && config.includeData === false) {
+    return WIZARD_STEPS.filter((s) => s === 'orgs' || s === 'templates' || s === 'review')
+  }
+  // 'review' is the data-less setup's terminal step ONLY — every data-bearing
+  // deployment (either kind) ends at 'plan'.
+  const data = visibleWizardSteps(config).filter((s) => s !== 'review')
+  // S73 (spec §E, missed by the S72 build): a sandbox setup WITH its data
+  // stage PROMOTES the Setup step to position two — templates are the point
+  // of the type, so they are decided before any data step. The data type
+  // keeps Stages in its S64 position after Fields.
+  if (kind === 'sandboxSetup') {
+    return ['orgs', 'templates', ...data.filter((s) => s !== 'orgs' && s !== 'templates')]
+  }
+  return data
+}
+
+/** S73: the step after `step` in this kind's wizard (null at the end / unknown). */
+export function stepAfter(
+  step: WizardStep,
+  kind: DeploymentKind,
+  config: Pick<WizardConfig, 'useExternalIds' | 'includeData'>
+): WizardStep | null {
+  const order = wizardStepsFor(kind, config)
+  const i = order.indexOf(step)
+  return i >= 0 && i + 1 < order.length ? order[i + 1]! : null
+}
+
+/** S73: the step before `step` in this kind's wizard (null at the start / unknown). */
+export function stepBefore(
+  step: WizardStep,
+  kind: DeploymentKind,
+  config: Pick<WizardConfig, 'useExternalIds' | 'includeData'>
+): WizardStep | null {
+  const order = wizardStepsFor(kind, config)
+  const i = order.indexOf(step)
+  return i > 0 ? order[i - 1]! : null
+}
+
+/** S72: is this step id valid for the given kind's wizard? (Guards hand-edited URLs.) */
+export function stepAllowedFor(
+  step: WizardStep,
+  kind: DeploymentKind,
+  config: Pick<WizardConfig, 'useExternalIds' | 'includeData'>
+): boolean {
+  return wizardStepsFor(kind, config).includes(step)
+}
+
+/** S72: a data-less sandbox setup — no data stage, no plan, no deploy run. */
+export function isDatalessSetup(kind: DeploymentKind, config: Pick<WizardConfig, 'includeData'>): boolean {
+  return kind === 'sandboxSetup' && config.includeData === false
 }
 
 /** Where "Next" goes from the Scope step (S61 U-5: keyless skips Readiness). */
@@ -414,8 +635,19 @@ export function readinessGate(config: WizardConfig): ReadinessGate {
 }
 
 /** Steps the readiness gate closes (everything after Readiness). */
-export function stepClosedByReadiness(step: WizardStep): boolean {
-  return stepIndex(step) > stepIndex('readiness')
+export function stepClosedByReadiness(
+  step: WizardStep,
+  kind: DeploymentKind = 'data',
+  config: Pick<WizardConfig, 'useExternalIds' | 'includeData'> = {}
+): boolean {
+  // S73: "after Readiness" in THIS KIND's order — a sandbox setup's Setup
+  // step is second, ahead of Readiness, so the gate must not close it (in
+  // WIZARD_STEPS 'templates' sits after 'readiness'). No Readiness in the
+  // list (keyless, data-less) → nothing is closed by it.
+  const order = wizardStepsFor(kind, config)
+  const r = order.indexOf('readiness')
+  const i = order.indexOf(step)
+  return r >= 0 && i > r
 }
 
 /** Operator-facing line for a closed gate — one wording, four surfaces. */
@@ -487,6 +719,21 @@ export function attestationBlocked(
     !snapshot.hasCpqTriggerSetting &&
     snapshot.cpqTriggerGatedObjects.length > 0
   return showNotice && !cpqAttestation
+}
+
+/**
+ * S72 — the same gate for a DATA-LESS setup: there is no plan snapshot, so
+ * the gated objects are every ticked seed's `cpqGatedObjects` (the union the
+ * composed path computes at freeze; here it is the only set). `hasCpqTriggerSetting`
+ * is probed live at run start by the template runner's own preflight — this
+ * predicate is for the review step's button, where only the template summary
+ * is known.
+ */
+export function setupAttestationBlocked(
+  templateGatedObjects: ReadonlyArray<string>,
+  cpqAttestation: boolean
+): boolean {
+  return templateGatedObjects.length > 0 && !cpqAttestation
 }
 
 /** Payload of an `objects`-kind template: just the selected object API names. */

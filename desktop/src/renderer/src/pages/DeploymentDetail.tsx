@@ -184,6 +184,8 @@ export function DeploymentDetailPage(): React.JSX.Element {
 
   const { deployment, run, counters, objects } = state
   const status = deployment.status
+  // S72: data-less sandbox setup — no run row ever; the stages strip IS the report.
+  const dataless = deployment.kind === 'sandboxSetup' && run == null && !counters && objects.length === 0
   // Prefer the renderer's live summary (it moves first); fall back to the
   // snapshot main attached so a cold-loaded page still shows the job.
   const job: JobSummary | null = liveJob ?? state.job
@@ -325,7 +327,7 @@ export function DeploymentDetailPage(): React.JSX.Element {
         />
       )}
 
-      {preRunFailure && (
+      {preRunFailure && !dataless && (
         <div className="banner" role="alert">
           <strong>Deploy did not start.</strong> The target org was not changed — the plan was
           refused before any automation was touched or any record written.
@@ -353,19 +355,54 @@ export function DeploymentDetailPage(): React.JSX.Element {
         </div>
       )}
 
-      {preRunCancelled && (
+      {preRunCancelled && !dataless && (
         <div className="banner warn">
           Cancelled before the run started — the target org was not changed.{' '}
           <Link to={`/deployments/${deploymentId}/wizard/plan`}>Back to plan</Link>.
         </div>
       )}
 
-      {preRunInterrupted && (
+      {/* S72 — the data-less setup's own banners: no run row exists, so the
+          data-run banners above (which speak of plans and records) must not fire. */}
+      {dataless && status === 'Failed' && (
+        <div className="banner" role="alert">
+          <strong>Setup did not finish.</strong> A template stage ended blocked or failed — the
+          stages below show how far it got; each stage links to its own report.
+          {deployment.errorMessage && <pre className="error-text">{deployment.errorMessage}</pre>}
+          <p>
+            <Link to={`/deployments/${deploymentId}/wizard/review`}>Back to review</Link> — fix
+            what the stage's report names, then run again (seeds resume from the id map).
+          </p>
+        </div>
+      )}
+      {dataless && status === 'Completed' && (
+        <div className="banner ok">
+          <strong>Setup completed.</strong> Every template stage ran; check each stage's report for
+          the details.
+        </div>
+      )}
+      {dataless && status === 'Cancelled' && (
+        <div className="banner warn">
+          <strong>Setup cancelled.</strong> Stages that finished left their work on the target;
+          run again to resume (seeds skip rows the id map already holds).
+        </div>
+      )}
+
+      {preRunInterrupted && !dataless && (
         <div className="banner warn">
           Recorded as {status.toLowerCase()} but no deploy job is running in this session — the app
           was closed during connect / gates / freeze. Nothing was changed on the target. Relaunch
           the app: startup reconciliation marks this attempt Failed with that note, and the Plan
           step reopens for another deploy.
+        </div>
+      )}
+      {preRunInterrupted && dataless && (
+        <div className="banner warn">
+          Recorded as {status.toLowerCase()} but no setup job is running in this session — the app
+          was closed while a template stage was running. Its target may hold part of the setup;
+          each stage&rsquo;s report shows how far it got. Relaunch the app: startup reconciliation
+          marks this attempt Failed with that note, and re-running resumes each seed from the id
+          map.
         </div>
       )}
 
@@ -585,8 +622,12 @@ export function DeploymentDetailPage(): React.JSX.Element {
           </button>
         )}
         {canEditPlan(status) && (
-          <Link className="btn" to={`/deployments/${deploymentId}/wizard/plan`}>
-            Open plan
+          // S72: a data-less setup's "back to the run" step is Review, not Plan.
+          <Link
+            className="btn"
+            to={`/deployments/${deploymentId}/wizard/${dataless ? 'review' : 'plan'}`}
+          >
+            {dataless ? 'Open review' : 'Open plan'}
           </Link>
         )}
         {status === 'Stalled' && <span className="muted">{STALLED_NEXT_STEP}</span>}

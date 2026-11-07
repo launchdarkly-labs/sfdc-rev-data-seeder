@@ -13,13 +13,15 @@
  * gate (deploy siblings, template applies) sees a running 'deploy' job for this deployment.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import type { OrgRole } from '../../shared/types'
+import type { DraftDetail, OrgRole } from '../../shared/types'
 import type { TemplateStepRef } from '../../shared/wizard'
 import {
   attestationBlocked,
   effectiveDisable,
+  isDatalessSetup,
   isKeyless,
   KEYLESS_CAUTION,
+  setupMissingStages,
   templateStepsOf
 } from '../../shared/wizard'
 import { outOfScopeRefs, type RefFieldLike } from '../../shared/scopeAdvisor'
@@ -62,6 +64,10 @@ export interface DeployRunDeps {
   /** `app.getAppMetrics()` (S54 F5 peak-memory line); injectable so this module has no Electron import. */
   appMetrics(): Array<{ type: string; memory: { workingSetSize: number } }>
 }
+
+/** S72/S73: the refusal for a sandbox setup (either mode) that stages nothing. */
+const SETUP_NO_STAGES_MESSAGE =
+  'This sandbox setup has no template stages — place at least one on the Setup step.'
 
 /**
  * Non-blank sample probe for populated-only (the rds:fields.populated logic,
@@ -120,88 +126,35 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
 
   const draft = store.loadDraft(deploymentId)
   if (!draft) throw new RdsHandlerError('NOT_FOUND', `Deployment ${deploymentId} not found`)
+
+  // S72: a DATA-LESS sandbox setup — template stages only, no plan, no data
+  // run, no deploy_runs row. The shared per-target-org locks still apply
+  // verbatim (its template stages write the target); the data-only gates
+  // (planned objects, analysis in flight, scope drift) are vacuous. See
+  // startSetupRun() at the bottom of this module.
+  if (isDatalessSetup(draft.kind, draft.config)) {
+    checkDeployStartLocks(deps, deploymentId, draft)
+    return startSetupRun(deps, deploymentId, draft)
+  }
+
+  // S73 (review of S72): a sandbox setup WITH its data stage must still stage
+  // at least one template — the type exists to run them. The Setup step
+  // disables Next, but a stale URL to Summary/Plan bypasses that, so the rule
+  // is enforced here too (before the plan check: the Setup step is earlier
+  // in the wizard than Plan, so it is the first thing to send the user to).
+  if (setupMissingStages(draft.kind, draft.config)) {
+    throw new RdsHandlerError('INVALID_STATE', SETUP_NO_STAGES_MESSAGE)
+  }
+
   const planned = store.getPlannedObjects(deploymentId)
   if (planned.length === 0) {
     throw new RdsHandlerError('INVALID_STATE', 'Run analysis before deploying.')
   }
-
-  // D1 run-lock across app sessions: deploy_runs is the source of truth.
-  // A NON-terminal run (incl. Stalled) means the target may still have
-  // automation disabled — never deploy over it. (A busy STATUS with no
-  // live run is a crash artifact; Store.reconcileOnStartup marks it Failed
-  // at launch, so by the time a button can be pressed it is gone.)
-  const runs = store.deploy.listRunsForDeployment(deploymentId)
-  const liveRun = runs.find((r) => !TERMINAL_RUN_PHASES.has(r.phase))
-  if (liveRun) {
-    throw new RdsHandlerError(
-      'INVALID_STATE',
-      liveRun.phase === 'Stalled'
-        ? 'A previous run of this deployment stalled during teardown — its target-org automation ' +
-            'may still be disabled. Restore it manually (steps on the deployment page), then create ' +
-            'a NEW deployment for the next attempt; recovery/acknowledge arrives with the E2 slice.'
-        : `A previous run of this deployment is still recorded as ${liveRun.phase} — its target-org ` +
-            'automation may still be disabled. Restore it manually (steps on the deployment page) ' +
-            'before deploying again.'
-    )
-  }
-  // The other strand shape (PLAN RC-4b): a TERMINAL run whose per-item
-  // restore did not fully confirm — restore never throws per item, so
-  // this is how a stranded target normally looks. A new run cannot
-  // re-discover items that are already disabled; refuse until they are
-  // restored (the E2 slice adds acknowledge/recovery).
-  const lastRun = runs.length > 0 ? runs[runs.length - 1]! : null
-  if (lastRun && store.deploy.ledgerUnconfirmed(runUuidFor(lastRun.id)).length > 0) {
-    throw new RdsHandlerError(
-      'INVALID_STATE',
-      'The previous run of this deployment ended with automation items NOT confirmed restored on ' +
-        'the target. Restore them manually (steps on the deployment page), then create a NEW ' +
-        'deployment for the next attempt; acknowledge/recovery arrives with the E2 slice.'
-    )
-  }
-
-  // S53 (item 2) — the SAME three gates, per TARGET ORG. Every check above
-  // is scoped to this deployment; two deployments aimed at one org passed
-  // them all and could run at once, and a stranded run of ANOTHER
-  // deployment (Stalled / restore unconfirmed) left the target's automation
-  // disabled while this one deployed over it. Siblings = every other
-  // deployment whose target connection resolves to the same org id
-  // (superseded aliases included). Never adopt a sibling's job.
-  const siblings = store.deploymentsSharingTarget(deploymentId)
-  if (siblings.length > 0) {
-    const runningDeploys = new Set(
-      jobs
-        .list()
-        .filter((j) => j.kind === 'deploy' && j.status === 'running' && j.deploymentId != null)
-        .map((j) => j.deploymentId as string)
-    )
-    const candidates: TargetLockCandidate[] = siblings.map((s) => {
-      const sRuns = store.deploy.listRunsForDeployment(s.id)
-      const sLive = sRuns.find((r) => !TERMINAL_RUN_PHASES.has(r.phase))
-      const sLast = sRuns.length > 0 ? sRuns[sRuns.length - 1]! : null
-      return {
-        deploymentId: s.id,
-        name: s.name,
-        runningJob: runningDeploys.has(String(s.id)),
-        liveRunPhase: sLive?.phase ?? null,
-        unconfirmedRestore:
-          sLast != null ? store.deploy.ledgerUnconfirmed(runUuidFor(sLast.id)).length : 0
-      }
-    })
-    const conflict = targetLockConflict(candidates, draft.targetLabel)
-    if (conflict != null) throw new RdsHandlerError('INVALID_STATE', conflict)
-  }
-
-  // S59 (plan §6.5) — the symmetric lock: a template APPLY / RESTORE job
-  // running against this target org, or temporary seed-time automation a
-  // template run left disabled there, refuses the deploy.
-  {
-    const targetRow = store.getConnection(draft.targetConnectionId)
-    const templateConflict = templateTargetLockConflict(store, jobs, targetRow?.orgId ?? '', draft.targetLabel)
-    if (templateConflict != null) throw new RdsHandlerError('INVALID_STATE', templateConflict)
-  }
+  checkDeployStartLocks(deps, deploymentId, draft)
 
   // Analysis run-lock (mirror of rds:plan.reorder): a completing analysis
-  // rewrites every plan row — never freeze/deploy while one runs.
+  // rewrites every plan row — never freeze/deploy while one runs. (Data
+  // path only — a data-less setup has no analysis.)
   const analysisInFlight = jobs
     .list()
     .find(
@@ -220,7 +173,8 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
   // Scope-drift gate (the StepPlan scopeChanged predicate, enforced
   // main-side): the analyzed plan's user objects must equal the draft's
   // current selection — freezing a stale plan resolves mappings against
-  // objects the analysis never saw.
+  // objects the analysis never saw. (Data-bearing deployments only — a
+  // data-less setup has no plan; the helper skips it via kind.)
   const planView = store.getPlan(deploymentId)
   const planUserObjects = new Set(
     (planView?.objects ?? [])
@@ -636,6 +590,12 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
         for (let i = 0; i < templateSteps.after.length; i++) await runStage(templateSteps.after[i]!, afterOffset + i)
         return result
       } catch (err) {
+        // S73: a composed attempt's template-stage rows can be left open by a
+        // throw between stageStarted and stageFinished (Cancel between stages,
+        // a runner exception) — close them now rather than at the next launch.
+        // The data stage's own catch above already finished its row; this is
+        // a no-op for it.
+        if (composed) closeStagesOnThrow(store, deploymentId, attemptId, err)
         // D1 close-out (services/deployAttempt.ts — tested in the sqlite
         // lane): pre-run → Failed + FULL text / Cancelled; run still Frozen
         // → close it through the state machine; otherwise the run mirrored
@@ -668,4 +628,235 @@ export async function startDeployRun(deps: DeployRunDeps, deploymentId: number):
     { deploymentId: String(deploymentId) }
   )
   return { jobId }
+}
+
+// ───────────────────────────── S72 — deployment types ─────────────────────────────
+
+/** The loaded draft shape the locks need (a subset of DraftDetail). */
+type LockDraft = Pick<
+  DraftDetail,
+  'kind' | 'config' | 'targetConnectionId' | 'targetLabel' | 'name'
+>
+
+/**
+ * S72 — the shared start-of-run LOCKS, lifted verbatim from the former inline
+ * block so the data path and the data-less setup path refuse exactly the same
+ * conflicts (the setup's template stages write the same target org):
+ *
+ *  1. this deployment's live / unconfirmed runs (deploy_runs is the truth);
+ *  2. sibling deployments sharing the target org (running job, live run,
+ *     unconfirmed restore);
+ *  3. a template apply/restore job against the target org (S59 §6.5, symmetric).
+ *
+ * The analysis in-flight and scope-drift gates are DATA-ONLY and stay in the
+ * data path (a data-less setup has no analysis and no plan).
+ */
+function checkDeployStartLocks(deps: DeployRunDeps, deploymentId: number, draft: LockDraft): void {
+  const { store, jobs } = deps
+  // D1 run-lock across app sessions: deploy_runs is the source of truth.
+  // A NON-terminal run (incl. Stalled) means the target may still have
+  // automation disabled — never deploy over it. (A busy STATUS with no
+  // live run is a crash artifact; Store.reconcileOnStartup marks it Failed
+  // at launch, so by the time a button can be pressed it is gone.)
+  const runs = store.deploy.listRunsForDeployment(deploymentId)
+  const liveRun = runs.find((r) => !TERMINAL_RUN_PHASES.has(r.phase))
+  if (liveRun) {
+    throw new RdsHandlerError(
+      'INVALID_STATE',
+      liveRun.phase === 'Stalled'
+        ? 'A previous run of this deployment stalled during teardown — its target-org automation ' +
+            'may still be disabled. Restore it manually (steps on the deployment page), then create ' +
+            'a NEW deployment for the next attempt; recovery/acknowledge arrives with the E2 slice.'
+        : `A previous run of this deployment is still recorded as ${liveRun.phase} — its target-org ` +
+            'automation may still be disabled. Restore it manually (steps on the deployment page) ' +
+            'before deploying again.'
+    )
+  }
+  // The other strand shape (PLAN RC-4b): a TERMINAL run whose per-item
+  // restore did not fully confirm — restore never throws per item, so
+  // this is how a stranded target normally looks. A new run cannot
+  // re-discover items that are already disabled; refuse until they are
+  // restored (the E2 slice adds acknowledge/recovery).
+  const lastRun = runs.length > 0 ? runs[runs.length - 1]! : null
+  if (lastRun && store.deploy.ledgerUnconfirmed(runUuidFor(lastRun.id)).length > 0) {
+    throw new RdsHandlerError(
+      'INVALID_STATE',
+      'The previous run of this deployment ended with automation items NOT confirmed restored on ' +
+        'the target. Restore them manually (steps on the deployment page), then create a NEW ' +
+        'deployment for the next attempt; acknowledge/recovery arrives with the E2 slice.'
+    )
+  }
+
+  // S53 (item 2) — the SAME three gates, per TARGET ORG. Every check above
+  // is scoped to this deployment; two deployments aimed at one org passed
+  // them all and could run at once, and a stranded run of ANOTHER
+  // deployment (Stalled / restore unconfirmed) left the target's automation
+  // disabled while this one deployed over it. Siblings = every other
+  // deployment whose target connection resolves to the same org id
+  // (superseded aliases included). Never adopt a sibling's job.
+  const siblings = store.deploymentsSharingTarget(deploymentId)
+  if (siblings.length > 0) {
+    const runningDeploys = new Set(
+      jobs
+        .list()
+        .filter((j) => j.kind === 'deploy' && j.status === 'running' && j.deploymentId != null)
+        .map((j) => j.deploymentId as string)
+    )
+    const candidates: TargetLockCandidate[] = siblings.map((s) => {
+      const sRuns = store.deploy.listRunsForDeployment(s.id)
+      const sLive = sRuns.find((r) => !TERMINAL_RUN_PHASES.has(r.phase))
+      const sLast = sRuns.length > 0 ? sRuns[sRuns.length - 1]! : null
+      return {
+        deploymentId: s.id,
+        name: s.name,
+        runningJob: runningDeploys.has(String(s.id)),
+        liveRunPhase: sLive?.phase ?? null,
+        unconfirmedRestore:
+          sLast != null ? store.deploy.ledgerUnconfirmed(runUuidFor(sLast.id)).length : 0
+      }
+    })
+    const conflict = targetLockConflict(candidates, draft.targetLabel)
+    if (conflict != null) throw new RdsHandlerError('INVALID_STATE', conflict)
+  }
+
+  // S59 (plan §6.5) — the symmetric lock: a template APPLY / RESTORE job
+  // running against this target org, or temporary seed-time automation a
+  // template run left disabled there, refuses the deploy.
+  {
+    const targetRow = store.getConnection(draft.targetConnectionId)
+    const templateConflict = templateTargetLockConflict(store, jobs, targetRow?.orgId ?? '', draft.targetLabel)
+    if (templateConflict != null) throw new RdsHandlerError('INVALID_STATE', templateConflict)
+  }
+}
+
+/**
+ * S72 — start a DATA-LESS sandbox setup: the draft's template stages run as
+ * one job (kind 'deploy', so every existing lock and the running-jobs UI see
+ * it), in the same before/after buckets the composed path uses — but with no
+ * data stage and therefore no deploy_runs row. Terminal status comes from the
+ * S72 store writers (`markSetupCompleted` / `markSetupFailed` / pre-run
+ * `markDeployCancelledBeforeRun` via closeOutAttempt), because the run-phase
+ * status mirror has nothing to mirror.
+ *
+ * Each stage is a real template run (`runTemplateStage`, purge:false /
+ * resume:false — identical to the composed path; D3's resume-on-RERUN is the
+ * template engine's own id map, untouched). A stage that ends blocked /
+ * failed / cancelled stops the sequence; later stages are recorded skipped.
+ */
+function startSetupRun(
+  deps: DeployRunDeps,
+  deploymentId: number,
+  draft: DraftDetail
+): { jobId: string } {
+  const { store, jobs, connectById, deployRunByJob } = deps
+  const templateSteps = templateStepsOf(draft.config)
+  if (templateSteps.before.length + templateSteps.after.length === 0) {
+    throw new RdsHandlerError('INVALID_STATE', SETUP_NO_STAGES_MESSAGE)
+  }
+
+  const jobId = jobs.start(
+    'deploy',
+    `Set up sandbox (${templateSteps.before.length + templateSteps.after.length} stage${templateSteps.before.length + templateSteps.after.length === 1 ? '' : 's'})`,
+    async (ctx) => {
+      store.markDeployStarted(deploymentId)
+      const attemptId = randomUUID()
+      const stageRows = store.deploy.createStages(deploymentId, attemptId, [
+        ...templateSteps.before.map((s) => ({ kind: 'template' as const, label: s.name, templateId: s.templateId })),
+        ...templateSteps.after.map((s) => ({ kind: 'template' as const, label: s.name, templateId: s.templateId }))
+      ])
+      const stageFor = (ref: TemplateStepRef, offset: number): (typeof stageRows)[number] | null => stageRows[offset] ?? null
+      const skipFrom = (position: number, why: string): void => {
+        for (const s of stageRows) if (s.position >= position && s.state === 'pending') store.deploy.stageFinished(s.id, 'skipped', why)
+      }
+      try {
+        const all = [...templateSteps.before, ...templateSteps.after]
+        for (let i = 0; i < all.length; i++) {
+          const ref = all[i]!
+          const row = stageFor(ref, i)
+          if (!row) continue
+          ctx.phase(`Stage ${row.position + 1}: ${ref.name}`)
+          store.deploy.stageStarted(row.id)
+          ctx.cancel.throwIfCancelled()
+          const out = await runTemplateStage(
+            { store, jobs, connectById },
+            ctx,
+            {
+              templateId: ref.templateId,
+              steps: ref.steps,
+              options: {
+                disableTargetAutomation: true,
+                cpqAttestation: draft.config.cpqAttestation,
+                purge: false,
+                resume: false
+              },
+              sourceConnectionId: draft.sourceConnectionId,
+              targetConnectionId: draft.targetConnectionId,
+              deploymentId,
+              onRunCreated: (runId) => store.deploy.stageLinkRun(row.id, { templateRunId: runId })
+            }
+          )
+          const state = stageStateOf(out.report.state)
+          const note =
+            state === 'blocked'
+              ? out.report.preflight.blockers.join(' · ')
+              : out.report.summary.unexpected > 0
+                ? `${out.report.summary.unexpected} unexpected problem${out.report.summary.unexpected === 1 ? '' : 's'}`
+                : null
+          store.deploy.stageFinished(row.id, state, note)
+          ctx.log(`stage ${row.position + 1} "${ref.name}": ${state}${note ? ` — ${note}` : ''}`, stageAllowsContinue(state) ? 'info' : 'error')
+          if (!stageAllowsContinue(state)) {
+            skipFrom(row.position + 1, `stage ${row.position + 1} "${ref.name}" ended ${state}`)
+            if (state === 'cancelled') throw new JobCancelledError()
+            // The note is folded into the thrown error; closeOutAttempt persists it.
+            throw new RdsHandlerError(
+              'INVALID_STATE',
+              `Stage "${ref.name}" ${state}${note ? `: ${note}` : ''} — the setup stopped there. See the stage's report.`
+            )
+          }
+        }
+        // Every stage clean/partial → Completed (the S72 writer: no run row
+        // exists, so nothing else writes the terminal status).
+        store.markSetupCompleted(deploymentId)
+        return { stages: stageRows.length }
+      } catch (err) {
+        // S73: a throw between stageStarted and stageFinished (a Cancel pressed
+        // between two stages trips `throwIfCancelled` AFTER the next row is
+        // 'running'; a runner failure that escaped as an exception) used to
+        // leave the attempt's rows at running/pending until the NEXT launch's
+        // reconciliation, while the deployment already read Failed/Cancelled.
+        // Close them now so the detail page agrees with the status.
+        closeStagesOnThrow(store, deploymentId, attemptId, err)
+        // closeOutAttempt's runId==null branch writes Failed/Cancelled pre-run
+        // (scoped to the 'Deploying' the job start wrote) — exactly the
+        // data-less shape.
+        closeOutAttempt(store, deploymentId, null, err)
+        throw err
+      } finally {
+        deployRunByJob.delete(ctx.jobId)
+      }
+    },
+    { deploymentId: String(deploymentId) }
+  )
+  return { jobId }
+}
+
+/**
+ * S73 — close every stage row of an attempt that a throw left open: the
+ * 'running' row becomes cancelled/failed with the reason, every 'pending' row
+ * is skipped. Idempotent — after the normal blocked/failed path (stageFinished
+ * + skipFrom already ran) there is nothing left to close. Called from BOTH
+ * starters' catch blocks (the data-less setup and the composed data path);
+ * before it, those rows waited for the next launch's `reconcileStagesOnStartup`
+ * while the deployment already read Failed/Cancelled. Exported for the sqlite lane.
+ */
+export function closeStagesOnThrow(store: Store, deploymentId: number, attemptId: string, err: unknown): void {
+  const cancelled = err instanceof JobCancelledError
+  const message = err instanceof Error ? err.message : String(err)
+  for (const s of store.deploy.stagesForAttempt(deploymentId, attemptId)) {
+    if (s.state === 'running') {
+      store.deploy.stageFinished(s.id, cancelled ? 'cancelled' : 'failed', cancelled ? 'cancelled' : message)
+    } else if (s.state === 'pending') {
+      store.deploy.stageFinished(s.id, 'skipped', cancelled ? 'the attempt was cancelled' : 'an earlier stage failed')
+    }
+  }
 }

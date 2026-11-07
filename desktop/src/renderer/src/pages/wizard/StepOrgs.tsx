@@ -1,5 +1,5 @@
 import { deploymentRoleIssues, describeAssignment } from '../../../../shared/roles'
-import { nextLabel } from '../../../../shared/wizard'
+import { nextLabelFor, stepAfter } from '../../../../shared/wizard'
 import { useIpcMutation, useIpcQuery } from '../../ipc/hooks'
 import { useToast } from '../../ui/Toast'
 import { Loading } from '../../ui/Loading'
@@ -22,8 +22,12 @@ export function StepOrgs(): React.JSX.Element {
     targetConnectionId,
     sourceLabel,
     targetLabel,
-    goToStep
+    goToStep,
+    kind,
+    config
   } = useWizard()
+  // S73: the next step depends on the kind — a sandbox setup goes to Setup first.
+  const next = stepAfter('orgs', kind, config) ?? 'objects'
   const toast = useToast()
   const { data, loading, error, refetch } = useIpcQuery(
     () => window.rds.objectsIntersection({ sourceConnectionId, targetConnectionId }),
@@ -104,9 +108,9 @@ export function StepOrgs(): React.JSX.Element {
             <button
               className="btn primary"
               disabled={data.common === 0}
-              onClick={() => goToStep('objects')}
+              onClick={() => goToStep(next)}
             >
-              {nextLabel('objects')}
+              {nextLabelFor(next, { kind })}
             </button>
           </div>
           {data.common === 0 && (

@@ -20,7 +20,18 @@ import {
   hasTemplateSteps,
   stageLabels,
   snapshotWithTemplateGates,
-  attestationBlocked
+  attestationBlocked,
+  wizardStepsFor,
+  stepAllowedFor,
+  stepLabel,
+  nextLabelFor,
+  isDatalessSetup,
+  stageLabelsFor,
+  duplicateStageReferences,
+  setupMissingStages,
+  stepAfter,
+  stepBefore,
+  setupAttestationBlocked
 } from '../src/shared/wizard'
 
 describe('wizard step rules', () => {
@@ -75,8 +86,9 @@ describe('S46 D1 status vocabulary', () => {
   // stepIndex comparison move with it — so inserting a step in the wrong slot
   // silently reorders the wizard. The loose version of this test (first ===
   // 'orgs', last === 'plan', contains 'readiness') would have passed for the
-  // S49 'objects' insertion no matter WHERE it landed.
-  it('orders the steps exactly orgs → objects → scope → … → plan', () => {
+  // S49 'objects' insertion no matter WHERE it landed. S72 appends 'review'
+  // LAST so no existing draft's saved step ids shift.
+  it('orders the steps exactly orgs → objects → scope → … → plan → review', () => {
     expect([...WIZARD_STEPS]).toEqual([
       'orgs',
       'objects',
@@ -86,7 +98,8 @@ describe('S46 D1 status vocabulary', () => {
       'fields',
       'templates',
       'summary',
-      'plan'
+      'plan',
+      'review'
     ])
   })
 
@@ -226,6 +239,7 @@ import {
   stepClosedByReadiness,
   type WizardConfig
 } from '../src/shared/wizard'
+import type { AutomationSnapshot } from '../src/shared/types'
 
 describe('readiness gate (S54 L1 — Readiness is a HARD STOP)', () => {
   const scoped = (objects: string[]): WizardConfig => ({
@@ -396,8 +410,239 @@ describe('S62 (U-2) — template stages on the draft', () => {
     expect(snapshotWithTemplateGates(snap, [])).toBe(snap)
     const out = snapshotWithTemplateGates(snap, ['SBQQ__PriceRule__c', 'SBQQ__Quote__c'])!
     expect(out.cpqTriggerGatedObjects).toEqual(['SBQQ__PriceRule__c', 'SBQQ__Quote__c'])
-    // One tick covers all: a config without an attestation is blocked once a seed brings gated objects.
-    expect(attestationBlocked(snapshotWithTemplateGates({ ...snap, cpqTriggerGatedObjects: [] }, ['SBQQ__PriceRule__c']), false, false)).toBe(true)
-    expect(attestationBlocked(snapshotWithTemplateGates({ ...snap, cpqTriggerGatedObjects: [] }, []), false, false)).toBe(false)
+  })
+  it('One tick covers all: a config without an attestation is blocked once a seed brings gated objects.', () => {
+    const snap2: AutomationSnapshot = {
+      items: [],
+      validationRuleCount: 0,
+      flowCount: 0,
+      triggerCount: 0,
+      duplicateRuleCount: 0,
+      hasCpqTriggerSetting: false,
+      cpqTriggerGatedObjects: [],
+      flowScopeFallback: false,
+      sectionErrors: []
+    }
+    expect(attestationBlocked(snapshotWithTemplateGates(snap2, ['SBQQ__PriceRule__c']), false, false)).toBe(true)
+    expect(attestationBlocked(snapshotWithTemplateGates(snap2, []), false, false)).toBe(false)
+  })
+})
+
+// ── S72: deployment types ─────────────────────────────────────────────────
+describe('S72 — per-kind wizard step lists', () => {
+  const keyed = emptyWizardConfig()
+
+  it("a 'data' deployment keeps today's list (with or without the optional includeData flag)", () => {
+    // Data-bearing lists end at 'plan' — 'review' is the data-less setup's alone.
+    const dataSteps = WIZARD_STEPS.filter((s) => s !== 'review')
+    expect(wizardStepsFor('data', keyed)).toEqual([...dataSteps])
+    // includeData is a sandbox-setup question; a data deployment ignores it.
+    expect(wizardStepsFor('data', { ...keyed, includeData: false })).toEqual([...dataSteps])
+  })
+
+  it('a sandbox setup WITH its data stage gets the full list with Setup PROMOTED to second (spec §E; S73)', () => {
+    const expected = ['orgs', 'templates', 'objects', 'scope', 'readiness', 'mappings', 'fields', 'summary', 'plan']
+    expect(wizardStepsFor('sandboxSetup', { ...keyed, includeData: true })).toEqual(expected)
+    // …and the seeded default (no flag written) reads as ON.
+    expect(wizardStepsFor('sandboxSetup', keyed)).toEqual(expected)
+    // keyless setup: same promotion, Readiness dropped
+    expect(wizardStepsFor('sandboxSetup', { useExternalIds: false, includeData: true })).toEqual(
+      expected.filter((s) => s !== 'readiness')
+    )
+    // the DATA type is byte-identical to 0.4.2: Stages stays after Fields
+    expect(wizardStepsFor('data', keyed)).toEqual(WIZARD_STEPS.filter((s) => s !== 'review'))
+  })
+
+  it('S73: stepAfter / stepBefore follow each kind\'s order', () => {
+    const setup = { ...keyed, includeData: true }
+    expect(stepAfter('orgs', 'sandboxSetup', setup)).toBe('templates')
+    expect(stepAfter('templates', 'sandboxSetup', setup)).toBe('objects')
+    expect(stepBefore('objects', 'sandboxSetup', setup)).toBe('templates')
+    expect(stepAfter('fields', 'sandboxSetup', setup)).toBe('summary')
+    expect(stepBefore('summary', 'sandboxSetup', setup)).toBe('fields')
+    // data: unchanged neighbours
+    expect(stepAfter('orgs', 'data', keyed)).toBe('objects')
+    expect(stepAfter('fields', 'data', keyed)).toBe('templates')
+    expect(stepBefore('summary', 'data', keyed)).toBe('templates')
+    expect(stepBefore('templates', 'data', keyed)).toBe('fields')
+    // data-less: Orgs ↔ Setup ↔ Review, ends are null
+    const dataless = { ...keyed, includeData: false }
+    expect(stepBefore('templates', 'sandboxSetup', dataless)).toBe('orgs')
+    expect(stepAfter('templates', 'sandboxSetup', dataless)).toBe('review')
+    expect(stepAfter('review', 'sandboxSetup', dataless)).toBeNull()
+    expect(stepBefore('orgs', 'data', keyed)).toBeNull()
+    // a step outside the kind's list has no neighbours
+    expect(stepAfter('plan', 'sandboxSetup', dataless)).toBeNull()
+  })
+
+  it('S73: the readiness gate never closes a sandbox setup\'s Setup step (it precedes Readiness in that order)', () => {
+    const setup = { ...keyed, includeData: true }
+    expect(stepClosedByReadiness('templates', 'sandboxSetup', setup)).toBe(false)
+    expect(stepClosedByReadiness('objects', 'sandboxSetup', setup)).toBe(false)
+    expect(stepClosedByReadiness('mappings', 'sandboxSetup', setup)).toBe(true)
+    expect(stepClosedByReadiness('plan', 'sandboxSetup', setup)).toBe(true)
+    // data: Stages is after Readiness, so it IS closed (unchanged)
+    expect(stepClosedByReadiness('templates', 'data', keyed)).toBe(true)
+    expect(stepClosedByReadiness('templates')).toBe(true)
+    // no Readiness in the list → nothing closed
+    expect(stepClosedByReadiness('review', 'sandboxSetup', { ...keyed, includeData: false })).toBe(false)
+    expect(stepClosedByReadiness('plan', 'data', { useExternalIds: false })).toBe(false)
+  })
+
+  it('S73: clampStep compares positions in the KIND\'s order — a stalled setup with data still admits Setup', () => {
+    const setup = { ...keyed, includeData: true }
+    // Stalled caps at 'fields'; Setup (second) is in front of it, Summary/Plan behind.
+    expect(clampStep('templates', 'Stalled', 'sandboxSetup', setup)).toBe('templates')
+    expect(clampStep('summary', 'Stalled', 'sandboxSetup', setup)).toBe('fields')
+    expect(clampStep('plan', 'Completed', 'sandboxSetup', setup)).toBe('plan')
+    // data: Stages (after Fields) is clamped by a Stalled cap, as before
+    expect(clampStep('templates', 'Stalled', 'data', keyed)).toBe('fields')
+    // data-less: Review is the cap; a stalled one reopens at Setup
+    expect(clampStep('review', 'Completed', 'sandboxSetup', { ...keyed, includeData: false })).toBe('review')
+    expect(clampStep('review', 'Stalled', 'sandboxSetup', { ...keyed, includeData: false })).toBe('templates')
+  })
+
+  it('a data-less setup offers exactly orgs → templates(setup) → review', () => {
+    const steps = wizardStepsFor('sandboxSetup', { ...keyed, includeData: false })
+    expect(steps).toEqual(['orgs', 'templates', 'review'])
+  })
+
+  it('keyless drop of Readiness still applies inside the data-bearing lists', () => {
+    // S73: the setup order (Setup second) minus Readiness
+    expect(wizardStepsFor('sandboxSetup', { useExternalIds: false, includeData: true })).toEqual([
+      'orgs', 'templates', 'objects', 'scope', 'mappings', 'fields', 'summary', 'plan'
+    ])
+    // the data kind keeps today's order minus Readiness
+    expect(wizardStepsFor('data', { useExternalIds: false })).toEqual(
+      WIZARD_STEPS.filter((s) => s !== 'review' && s !== 'readiness')
+    )
+    // and is irrelevant for data-less (no readiness step to drop)
+    expect(wizardStepsFor('sandboxSetup', { useExternalIds: false, includeData: false })).toEqual([
+      'orgs',
+      'templates',
+      'review'
+    ])
+  })
+
+  it('isDatalessSetup: only sandboxSetup + explicit includeData false', () => {
+    expect(isDatalessSetup('sandboxSetup', { includeData: false })).toBe(true)
+    expect(isDatalessSetup('sandboxSetup', {})).toBe(false) // default ON
+    expect(isDatalessSetup('sandboxSetup', { includeData: true })).toBe(false)
+    expect(isDatalessSetup('data', { includeData: false })).toBe(false) // a data kind always has data
+  })
+
+  it("stepAllowedFor: a data deployment never sees 'review'; a data-less setup never sees 'plan'", () => {
+    expect(stepAllowedFor('review', 'data', keyed)).toBe(false)
+    expect(stepAllowedFor('plan', 'data', keyed)).toBe(true)
+    const dataless = { ...keyed, includeData: false }
+    expect(stepAllowedFor('plan', 'sandboxSetup', dataless)).toBe(false)
+    expect(stepAllowedFor('review', 'sandboxSetup', dataless)).toBe(true)
+    expect(stepAllowedFor('summary', 'sandboxSetup', dataless)).toBe(false)
+  })
+
+  it('the kind-aware cap: a DATA-LESS setup ends at Review and reopens at Setup when stalled; a setup WITH data caps like data (S73)', () => {
+    const dataless = { includeData: false }
+    expect(stepCapForStatus('Completed', 'sandboxSetup', dataless)).toBe('review')
+    expect(stepCapForStatus('Stalled', 'sandboxSetup', dataless)).toBe('templates')
+    expect(stepCapForStatus('Completed', 'sandboxSetup', { includeData: true })).toBe('plan')
+    expect(stepCapForStatus('Stalled', 'sandboxSetup', { includeData: true })).toBe('fields')
+    // no config = the seeded default (data stage ON)
+    expect(stepCapForStatus('Completed', 'sandboxSetup')).toBe('plan')
+    // defaults are the data behaviour (pre-S72 callers unchanged)
+    expect(stepCapForStatus('Completed')).toBe('plan')
+    expect(stepCapForStatus('Stalled')).toBe('fields')
+  })
+
+  it("'templates' relabels to 'Setup' for a sandbox setup; everything else is unchanged", () => {
+    expect(stepLabel('templates', { kind: 'sandboxSetup' })).toBe('Setup')
+    expect(stepLabel('templates', { kind: 'data' })).toBe('Stages')
+    expect(stepLabel('plan', { kind: 'sandboxSetup' })).toBe('Plan')
+    expect(nextLabelFor('review', { kind: 'sandboxSetup' })).toBe('Next: Review')
+  })
+
+  it('stageLabelsFor: a data-less setup lists templates only — no "Data deployment" row', () => {
+    const seedRef = { templateId: 3, name: 'LD CPQ configuration', kind: 'seed' as const, steps: { automation: false, seeds: [], optInPatches: [] } }
+    const config = { templateSteps: { before: [seedRef], after: [] } }
+    expect(stageLabelsFor(config, 'data')).toEqual(['LD CPQ configuration', 'Data deployment'])
+    // data-less = includeData explicitly false
+    expect(stageLabelsFor({ ...config, includeData: false }, 'sandboxSetup')).toEqual([
+      'LD CPQ configuration'
+    ])
+    expect(stageLabelsFor({ ...config, includeData: true }, 'sandboxSetup')).toEqual([
+      'LD CPQ configuration',
+      'Data deployment'
+    ])
+    // an UNSET flag reads as ON (D2 default) — the data row is there
+    expect(stageLabelsFor(config, 'sandboxSetup')).toEqual([
+      'LD CPQ configuration',
+      'Data deployment'
+    ])
+  })
+})
+
+describe('S72 — the S71 duplicate-reference trap', () => {
+  const seedRef = (id: number, name: string) => ({
+    templateId: id,
+    name,
+    kind: 'seed' as const,
+    steps: { automation: false, seeds: [{ name, groups: [] }], optInPatches: [] }
+  })
+  const prRef = (id: number, name: string, seeds: Array<{ name: string; groups: string[] }>) => ({
+    templateId: id,
+    name,
+    kind: 'postRefresh' as const,
+    steps: { automation: true, seeds, optInPatches: [] }
+  })
+
+  it('flags a seed placed as its own stage AND ticked inside a post-refresh stage (the S71 shape)', () => {
+    const config = {
+      templateSteps: {
+        before: [prRef(4, 'LD dev sandbox', [{ name: 'LD CPQ configuration', groups: [] }]), seedRef(3, 'LD CPQ configuration')],
+        after: []
+      }
+    }
+    // templateId 4's payload embeds "LD CPQ configuration"
+    const embedded = new Map([[4, ['LD CPQ configuration']]])
+    const dups = duplicateStageReferences(config, embedded)
+    expect(dups).toHaveLength(1)
+    expect(dups[0]!.seedName).toBe('LD CPQ configuration')
+    expect(dups[0]!.ownStage).toBe('LD CPQ configuration')
+    expect(dups[0]!.nestedIn).toBe('LD dev sandbox')
+  })
+
+  it('a seed ticked inside a post-refresh stage ONLY (no own stage) is fine', () => {
+    const config = { templateSteps: { before: [prRef(4, 'LD dev sandbox', [{ name: 'LD CPQ configuration', groups: [] }])], after: [] } }
+    expect(duplicateStageReferences(config, new Map([[4, ['LD CPQ configuration']]]))).toEqual([])
+  })
+
+  it('an UNTICKED embedded seed (in the payload but not in the stage refs) is not flagged', () => {
+    // The payload names the seed, but the post-refresh stage's refs leave it out — it will not run twice.
+    const config = {
+      templateSteps: {
+        before: [prRef(4, 'LD dev sandbox', [{ name: 'LD CPQ configuration', groups: [] }]), seedRef(3, 'LD CPQ configuration')],
+        after: []
+      }
+    }
+    // embedded names come from the payload; the refs carry the tick state
+    const embedded = new Map([[4, []]])
+    expect(duplicateStageReferences(config, embedded)).toEqual([])
+  })
+
+  it('no seeds anywhere → no duplicates, whatever the placements', () => {
+    const config = { templateSteps: { before: [prRef(4, 'PR only', [])], after: [prRef(5, 'PR 2', [])] } }
+    expect(duplicateStageReferences(config, new Map())).toEqual([])
+  })
+
+  it('setupMissingStages: only a sandbox setup must place stages', () => {
+    expect(setupMissingStages('sandboxSetup', {})).toBe(true)
+    const withStage = { templateSteps: { before: [seedRef(3, 'LD CPQ configuration')], after: [] } }
+    expect(setupMissingStages('sandboxSetup', withStage)).toBe(false)
+    expect(setupMissingStages('data', {})).toBe(false)
+  })
+
+  it('setupAttestationBlocked mirrors the data gate: gated seeds without the tick block', () => {
+    expect(setupAttestationBlocked(['SBQQ__Quote__c'], false)).toBe(true)
+    expect(setupAttestationBlocked(['SBQQ__Quote__c'], true)).toBe(false)
+    expect(setupAttestationBlocked([], false)).toBe(false)
   })
 })

@@ -74,6 +74,7 @@ function install(): void {
       sourceConnectionId: 'src',
       targetConnectionId: 'tgt',
       sourceLabel: 'src',
+      kind: 'data',
       targetLabel: 'tgt',
       step: 'mappings',
       config: {
@@ -492,6 +493,7 @@ describe('StepMappings (5B.5)', () => {
         sourceConnectionId: 'src',
         targetConnectionId: 'tgt',
         sourceLabel: 'src',
+        kind: 'data',
         targetLabel: 'tgt',
         step: 'mappings',
         config: { ...emptyWizardConfig(), selectedObjects: [] },

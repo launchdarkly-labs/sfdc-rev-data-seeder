@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.4.3 — 2026-11-07
+
+### Deployment types (S72, reviewed and hardened S73)
+- **Choose the type when you create a deployment.** Two cards on New Deployment: **Data deployment** (today's flow —
+  copy a scoped record graph, templates optional) and **Sandbox setup** (take a fresh sandbox from empty to working —
+  templates first and required, data stage optional, default on). The type is fixed for the life of the row, the same
+  rule as source and target. Every existing deployment reads as a data deployment and keeps its 0.4.2 wizard.
+- **The wizard follows the type.** A sandbox setup with its data stage runs orgs → **Setup** → objects → … → plan (the
+  Stages step moves to position two and is renamed Setup; everything after it is unchanged). A sandbox setup without a
+  data stage is three steps: orgs → Setup → **Review** — no analysis, no plan, no deploy run; the Review step shows the
+  stage run order, the CPQ "Triggers Disabled" confirmation for the ticked seeds, and **Run setup**.
+- **Templates-only runs.** A data-less setup runs its template stages inside one deployment job, so every existing lock
+  (sibling deployments on the same target, template jobs, unrestored automation) applies to it. Its status is written by
+  the stages alone (Completed / Failed with the stage's note / Cancelled); a setup interrupted by an app crash is marked
+  Failed on the next launch with a message that says the target may hold part of the setup.
+- **The twice-referenced template warning.** Placing a seed template as its own stage AND leaving it ticked inside a
+  post-refresh stage made the second run block (its objects were already loaded) and skipped every later stage. The
+  Setup/Stages step and the Review/Plan step now show a will-fail block naming both references — on both deployment types.
+- **Deployments list and detail.** Cards carry a kind badge (Deployment / Sandbox setup); a data-less setup's detail page
+  shows the stages strip as its report, with its own Completed / Failed / Cancelled banners and **Open review** in place
+  of Open plan.
+- **Run-start guards.** A sandbox setup that stages nothing is refused at run start in both modes (the Setup step already
+  disabled Next; a stale URL could bypass it). A Cancel pressed between two stages, or a stage runner failure, now closes
+  the open stage rows at once (cancelled / failed with the reason, later stages skipped) instead of leaving a stage
+  reading "running" until the next launch — on the data-less starter and on composed data deployments.
+- **Schema.** Migration 015 adds `deployments.kind` (default `data`). Nothing else changes on disk.
+- **Tests.** +13 pure (wizard step lists per kind, the duplicate-reference predicate, the New Deployment cards), +11
+  sqlite (migration 015 on a pre-015 database, the setup status writers and reconciliation, and a lane that drives the
+  data-less starter end to end with the template-stage runner faked: clean, blocked, cancelled, thrown, cancel between
+  stages, refusals, the sibling-target lock, in-flight adoption).
+- **Live-proven in part.** The data-less sandbox setup ran clean on a fresh sandbox (one post-refresh stage: 28 automations
+  deactivated, 4,799 configuration rows seeded, verify clean, 4 min 34 s). A sandbox setup with its data stage and a cancel
+  mid-stage have not yet been run live.
+
 ## 0.4.2 — 2026-11-01
 
 ### Org Connections (UAT S70)

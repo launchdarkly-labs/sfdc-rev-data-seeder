@@ -28,7 +28,14 @@ function conn(id: string, role: OrgConnection['role'], prodPinned = false): OrgC
   }
 }
 
-let created: { name: string; sourceConnectionId: string; targetConnectionId: string; useExternalIds?: boolean } | null
+let created: {
+  name: string
+  sourceConnectionId: string
+  targetConnectionId: string
+  useExternalIds?: boolean
+  kind?: string
+  includeData?: boolean
+} | null
 
 beforeEach(() => {
   created = null
@@ -44,6 +51,8 @@ beforeEach(() => {
       sourceConnectionId: string
       targetConnectionId: string
       useExternalIds?: boolean
+      kind?: string
+      includeData?: boolean
     }) => {
       created = input
       // S52 F1: the create reports which roles it wrote; 'scratch' is unassigned.
@@ -105,7 +114,9 @@ describe('NewDeploymentPage', () => {
       name: 'My Deploy',
       sourceConnectionId: 'scratch',
       targetConnectionId: 'sb1',
-      useExternalIds: true
+      useExternalIds: true,
+      kind: 'data',
+      includeData: undefined
     })
   })
 
@@ -182,5 +193,59 @@ describe('NewDeploymentPage', () => {
     await user.click(screen.getByRole('button', { name: /Create/ }))
     await waitFor(() => expect(screen.getByText('WIZARD ROUTE')).toBeInTheDocument())
     expect(created).toMatchObject({ name: 'Keyless', useExternalIds: false })
+  })
+
+  // ── S72: deployment types ──────────────────────────────────────────────
+  it('S72 (D1/D2): a sandbox setup with the data stage ON sends kind + includeData true', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('Source (read-only)')
+    await user.click(screen.getByLabelText(/Sandbox setup/))
+    // The data stage toggle appears and is ON by default (D2).
+    const dataToggle = screen.getByLabelText(/Include a data stage/)
+    expect(dataToggle).toBeChecked()
+    // The key question stays visible (data will land).
+    expect(screen.getByLabelText(/Use an External Id field on the target/)).toBeInTheDocument()
+    const [sourceSel, targetSel] = screen.getAllByRole('combobox')
+    await user.type(screen.getByPlaceholderText(/week45 sandbox setup/), 'Setup run')
+    await user.selectOptions(sourceSel!, 'srcbox')
+    await user.selectOptions(targetSel!, 'sb1')
+    await user.click(screen.getByRole('button', { name: /Create/ }))
+    await waitFor(() => expect(screen.getByText('WIZARD ROUTE')).toBeInTheDocument())
+    expect(created).toMatchObject({ kind: 'sandboxSetup', includeData: true })
+  })
+
+  it('S72 (D2 off): a data-less setup hides the key question, warns, and sends includeData false', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('Source (read-only)')
+    await user.click(screen.getByLabelText(/Sandbox setup/))
+    await user.click(screen.getByLabelText(/Include a data stage/))
+    // No External Id question (no upsert), the templates-only note instead.
+    expect(screen.queryByLabelText(/Use an External Id field on the target/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('setup-no-data')).toHaveTextContent(/Templates only/)
+    const [sourceSel, targetSel] = screen.getAllByRole('combobox')
+    await user.type(screen.getByPlaceholderText(/week45 sandbox setup/), 'Templates only')
+    await user.selectOptions(sourceSel!, 'srcbox')
+    await user.selectOptions(targetSel!, 'sb1')
+    await user.click(screen.getByRole('button', { name: /Create/ }))
+    await waitFor(() => expect(screen.getByText('WIZARD ROUTE')).toBeInTheDocument())
+    expect(created).toMatchObject({
+      kind: 'sandboxSetup',
+      includeData: false,
+      // the key choice is irrelevant; the create seeds the safe default
+      useExternalIds: true
+    })
+  })
+
+  it('S72: switching back to a data deployment restores the key question and hides the data-stage toggle', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('Source (read-only)')
+    await user.click(screen.getByLabelText(/Sandbox setup/))
+    expect(screen.getByLabelText(/Include a data stage/)).toBeInTheDocument()
+    await user.click(screen.getByLabelText(/Data deployment/))
+    expect(screen.queryByLabelText(/Include a data stage/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/Use an External Id field on the target/)).toBeInTheDocument()
   })
 })

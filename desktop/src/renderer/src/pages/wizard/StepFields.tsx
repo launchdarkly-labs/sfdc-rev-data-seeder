@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from 'react'
-import { nextLabel, isKeyless } from '../../../../shared/wizard'
+import { nextLabelFor, isKeyless, stepAfter } from '../../../../shared/wizard'
 import {
   fieldExclusion,
   fieldNamespace,
@@ -132,8 +132,10 @@ const EMPTY_NAMES: readonly string[] = []
  * field of every other object.
  */
 export function StepFields(): React.JSX.Element {
-  const { config, updateConfig, goToStep, sourceConnectionId, targetConnectionId, describe } =
+  const { config, updateConfig, goToStep, sourceConnectionId, targetConnectionId, describe, kind } =
     useWizard()
+  // S73: Next is Stages for a data deployment, Summary for a sandbox setup (its Setup step came second).
+  const next = stepAfter('fields', kind, config) ?? 'templates'
   const objects = config.selectedObjects
   const scopeKey = objects.join(',')
 
@@ -464,8 +466,8 @@ export function StepFields(): React.JSX.Element {
         <button className="btn" disabled={templateBusy} onClick={() => goToStep('mappings')}>
           Back
         </button>
-        <button className="btn primary" disabled={templateBusy} onClick={() => goToStep('templates')}>
-          {nextLabel('templates')}
+        <button className="btn primary" disabled={templateBusy} onClick={() => goToStep(next)}>
+          {nextLabelFor(next, { kind })}
         </button>
         {templateBusy && <span className="muted">Finishing the current action…</span>}
       </div>

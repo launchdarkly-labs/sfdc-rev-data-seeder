@@ -59,6 +59,7 @@ function install(config: Partial<WizardConfig>): void {
       targetConnectionId: 'sb1-915-git',
       sourceLabel: 'srcbox_911',
       targetLabel: 'sb1-915-git',
+      kind: 'data',
       step: 'scope',
       config: { ...emptyWizardConfig(), ...config },
       status: 'Draft'

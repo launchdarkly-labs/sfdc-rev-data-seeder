@@ -27,6 +27,7 @@ beforeEach(() => {
       sourceConnectionId: 'src',
       targetConnectionId: 'tgt',
       sourceLabel: 'src',
+      kind: 'data',
       targetLabel: 'tgt',
       step: 'orgs',
       config: emptyWizardConfig(),

@@ -85,6 +85,7 @@ describe('Plan step on a deployment that already ran', () => {
         sourceConnectionId: 'src',
         targetConnectionId: 'tgt',
         sourceLabel: 'src',
+        kind: 'data',
         targetLabel: 'tgt',
         step: 'plan',
         // keyless: no readiness gate to satisfy in the fixture

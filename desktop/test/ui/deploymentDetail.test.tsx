@@ -40,6 +40,7 @@ function base(over: Partial<DeployRunStateView> = {}): DeployRunStateView {
       errorMessage: null,
       sourceLabel: 'srcbox_829',
       targetLabel: 'sb1_830',
+      kind: 'data',
       createdAt: 1,
       updatedAt: 2
     },

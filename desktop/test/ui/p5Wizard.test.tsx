@@ -64,6 +64,7 @@ function install(step: string, configOverride: Record<string, unknown> = {}): vo
       sourceConnectionId: 'srcbox_a',
       targetConnectionId: 'tgt_a',
       sourceLabel: 'srcbox_a',
+      kind: 'data',
       targetLabel: 'tgt_a',
       step: step as DraftDetail['step'],
       config: {

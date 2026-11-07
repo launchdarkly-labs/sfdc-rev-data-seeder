@@ -1,10 +1,15 @@
 import { useMemo } from 'react'
 import type { PostRefreshTemplate, TemplateDetail, TemplateSummary } from '../../../../shared/templates/types'
-import { nextLabel,
+import {
+  duplicateStageReferences,
+  nextLabelFor,
+  setupMissingStages,
+  stageLabelsFor,
+  stepAfter,
+  stepBefore,
   TEMPLATE_STAGES_NOTE_LEAD,
   TEMPLATE_STAGES_NOTE_MORE,
   templateStepsOf,
-  stageLabels,
   type TemplateStepRef,
   type TemplateStepsConfig
 } from '../../../../shared/wizard'
@@ -19,9 +24,14 @@ type Placement = 'none' | 'before' | 'after'
  * this deployment, before and/or after the data. The deployment's source and target are used for
  * every stage; each stage is a real template run with its own report (see TEMPLATE_STAGES_NOTE).
  * Nothing here talks to an org — it only edits `config.templateSteps`.
+ *
+ * S72: for a SANDBOX SETUP this is the "Setup" step (second in the wizard) and stages are
+ * REQUIRED — the type exists to run them. It also renders the S71 duplicate-reference warning
+ * (a seed as its own stage AND ticked inside a post-refresh stage), which would otherwise block
+ * the run at stage 2 with the data skipped.
  */
 export function StepTemplates(): React.JSX.Element {
-  const { config, updateConfig, goToStep, sourceLabel, targetLabel } = useWizard()
+  const { config, updateConfig, goToStep, sourceLabel, targetLabel, kind, includeData } = useWizard()
   const all = useIpcQuery(() => window.rds.templateListAll(), [])
   const runnable = useMemo(
     () => (all.data ?? []).filter((t) => t.kind === 'seed' || t.kind === 'postRefresh'),
@@ -78,14 +88,32 @@ export function StepTemplates(): React.JSX.Element {
   }
 
   const seedSummaries = runnable.filter((t) => t.kind === 'seed')
-  const labels = stageLabels(config)
+  const labels = stageLabelsFor(config, kind)
+  const setup = kind === 'sandboxSetup'
+  // S71 trap: each post-refresh stage's embedded seed names, for the duplicate check.
+  const postRefreshSeeds = useMemo(() => {
+    const m = new Map<number, ReadonlyArray<string>>()
+    for (const t of runnable) {
+      if (t.kind !== 'postRefresh') continue
+      const payload = detailById.get(t.id)?.payload as PostRefreshTemplate | undefined
+      m.set(t.id, (payload?.seedTemplates ?? []).map((s) => s.name))
+    }
+    return m
+  }, [runnable, detailById])
+  const duplicates = duplicateStageReferences(config, postRefreshSeeds)
+  const missingStages = setupMissingStages(kind, config)
+  // S73: neighbours come from the kind's step order — data: Fields ↔ Stages ↔ Summary;
+  // setup with data: Orgs ↔ Setup ↔ Objects; data-less setup: Orgs ↔ Setup ↔ Review.
+  const backTo = stepBefore('templates', kind, config) ?? 'orgs'
+  const nextTo = stepAfter('templates', kind, config) ?? (includeData === false ? 'review' : 'summary')
 
   return (
     <>
-      <h2>Templates to run with this deployment</h2>
+      <h2>{setup ? 'Set up this sandbox' : 'Templates to run with this deployment'}</h2>
       <p className="muted">
-        Optional. Run a saved post-refresh or data-seed template before the data lands in {targetLabel} (silence the org,
-        load configuration) or after it. Every stage reads from {sourceLabel} and writes to {targetLabel}.
+        {setup
+          ? `What ${targetLabel} needs before${includeData === false ? ' you review the run' : ' its data lands'} — silence the org and load configuration from ${sourceLabel}, then${includeData === false ? '' : ' the data stage follows.'} Every stage reads from ${sourceLabel} and writes to ${targetLabel}.`
+          : `Optional. Run a saved post-refresh or data-seed template before the data lands in ${targetLabel} (silence the org, load configuration) or after it. Every stage reads from ${sourceLabel} and writes to ${targetLabel}.`}
       </p>
       {/* T-16: one-sentence lead; the rest behind a disclosure. */}
       <div className="banner warn" role="note" data-testid="stages-note">
@@ -96,10 +124,46 @@ export function StepTemplates(): React.JSX.Element {
         </details>
       </div>
 
+      {/* S72 — a sandbox setup must run at least one stage; the S71 duplicate-reference trap is a will-fail block. */}
+      {missingStages && (
+        <div className="banner error" role="alert" data-testid="setup-missing-stages">
+          A sandbox setup runs template stages — place at least one post-refresh or seed template
+          before continuing.
+        </div>
+      )}
+      {duplicates.length > 0 && (
+        <div className="banner error" role="alert" data-testid="duplicate-stage-refs">
+          {(() => {
+            const first = duplicates[0]
+            if (!first) return null
+            return (
+              <>
+                <strong>A template is referenced twice.</strong> {first.seedName} runs as its own
+                stage AND nested inside “{first.nestedIn}” — the second run would find the seed
+                objects already loaded and block, skipping every later stage. Set one of the two to
+                “Not used”.
+                {duplicates.length > 1 && (
+                  <details className="learn-more">
+                    <summary>{duplicates.length - 1} more</summary>
+                    <ul>
+                      {duplicates.slice(1).map((d, i) => (
+                        <li key={i}>
+                          {d.seedName} — own stage “{d.ownStage}” + nested in “{d.nestedIn}”
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </>
+            )
+          })()}
+        </div>
+      )}
+
       {all.loading && <p className="muted">Loading templates…</p>}
       {all.error && <div className="banner">{all.error.message}</div>}
       {!all.loading && runnable.length === 0 && (
-        <p className="muted">No runnable templates yet — build one on the Templates tab, or continue without.</p>
+        <p className="muted">No runnable templates yet — build one on the Templates tab{setup ? ' before continuing' : ', or continue without'}.</p>
       )}
 
       {runnable.length > 0 && (
@@ -238,11 +302,16 @@ export function StepTemplates(): React.JSX.Element {
       </p>
 
       <div className="toolbar">
-        <button className="btn" onClick={() => goToStep('fields')}>
+        <button className="btn" onClick={() => goToStep(backTo)}>
           Back
         </button>
-        <button className="btn primary" onClick={() => goToStep('summary')}>
-          {nextLabel('summary')}
+        <button
+          className="btn primary"
+          onClick={() => goToStep(nextTo)}
+          disabled={missingStages}
+          title={missingStages ? 'Place at least one template stage first' : undefined}
+        >
+          {nextLabelFor(nextTo, { kind })}
         </button>
       </div>
     </>

@@ -84,6 +84,29 @@
   border-top: 1px solid var(--border);
 }
 
+/* ── S72 — the Review step's run-order strip (data-less sandbox setup) ──── */
+.stage-order-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.stage-order-list > li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+.stage-order-list > li:first-child {
+  border-top: 0;
+}
+.stage-order-num {
+  flex: 0 0 1.4em;
+  text-align: center;
+  font-weight: 700;
+  color: var(--muted);
+}
+
 /* The former will-fail banner, now a Pre-flight row body (keeps its red accent). */
 .will-fail {
   border-left: 3px solid var(--red);

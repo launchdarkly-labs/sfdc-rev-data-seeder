@@ -50,6 +50,18 @@ export const INTERRUPTED_BEFORE_RUN_MESSAGE =
   'Interrupted before the run started (the app was closed during connect / gates / plan freeze). ' +
   'Nothing was changed on the target org — deploy again from the Plan step.'
 
+/**
+ * S72 — the same crash shape for a DATA-LESS sandbox setup: no deploy_runs row
+ * ever exists, but its template stages DID touch the target, so the data-kind
+ * copy ("nothing on the target was touched") would be a lie. The stage rows
+ * and each stage's template run report carry what actually happened; the
+ * setup can be re-run (resume keeps the seed id map).
+ */
+export const INTERRUPTED_SETUP_MESSAGE =
+  'Interrupted mid-setup (the app was closed while a template stage was running). Its target may ' +
+  'hold part of the setup — each stage\u2019s report shows how far it got, and re-running resumes ' +
+  'from the seed id map. Check the target\u2019s automation state before re-running.'
+
 /** S64 (P2): where per-record failures can be read — the table below and the JSON export, not a database table name. */
 export const RUN_LOG_POINTER =
   'the Deployment page shows failures per object and "Export failure list" saves every failed row with its reason as JSON.'

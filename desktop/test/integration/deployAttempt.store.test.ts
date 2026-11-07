@@ -5,7 +5,11 @@
  *   Store.reconcileOnStartup · currentAttemptRun / buildDeployRunState.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { Store } from '../../src/main/services/store'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import Database from 'better-sqlite3'
+import { Store, MIGRATIONS } from '../../src/main/services/store'
 import { JobManager, JobCancelledError } from '../../src/main/jobs'
 import {
   bridgeCancel,
@@ -17,6 +21,7 @@ import { buildDeployRunState, currentAttemptRun } from '../../src/main/services/
 import { PlanFreezeError } from '../../src/main/engine/deploy/planFreeze'
 import {
   INTERRUPTED_BEFORE_RUN_MESSAGE,
+  INTERRUPTED_SETUP_MESSAGE,
   STALLED_TEARDOWN_MESSAGE
 } from '../../src/shared/recoveryCopy'
 
@@ -380,5 +385,125 @@ describe('currentAttemptRun / buildDeployRunState attribution (review F3)', () =
     jobs.start('deploy', 'Deploy data', async () => undefined, { deploymentId: String(id) })
     await flush()
     expect(buildDeployRunState(store, jobs, id).job?.kind).toBe('deploy')
+  })
+})
+
+// ── S72: deployment kinds (data | sandboxSetup) ───────────────────────────────
+describe('S72 — deployment kinds', () => {
+  it('defaults to data; a sandboxSetup round-trips through create/loadDraft/list/header', () => {
+    const dataId = newDeployment()
+    const setupId = store.createDeployment({
+      name: 'week45 setup',
+      sourceConnectionId: 'src',
+      targetConnectionId: 'tgt',
+      kind: 'sandboxSetup'
+    })
+    expect(store.loadDraft(dataId)!.kind).toBe('data')
+    const setupDraft = store.loadDraft(setupId)!
+    expect(setupDraft.kind).toBe('sandboxSetup')
+    // D2: the data stage is seeded ON for a setup (readers default ?? true)
+    expect(setupDraft.config.includeData).toBe(true)
+    expect(store.loadDraft(dataId)!.config.includeData).toBeUndefined()
+
+    const listed = store.listDrafts()
+    expect(listed.find((d) => d.id === dataId)!.kind).toBe('data')
+    expect(listed.find((d) => d.id === setupId)!.kind).toBe('sandboxSetup')
+    expect(store.getDeploymentHeader(setupId)!.kind).toBe('sandboxSetup')
+  })
+
+  it('a pre-015 DB (no kind column) upgrades and every legacy row reads as data', () => {
+    // Build a 014 DB (everything except 015) with a deployment, then open.
+    // Post-003 connections carry id/label; deployments reference connection ids.
+    const dir = mkdtempSync(join(tmpdir(), 'rds-mig015-'))
+    const dbPath = join(dir, 'rds.db')
+    try {
+      const raw = new Database(dbPath)
+      raw.pragma('foreign_keys = ON')
+      raw.exec(`CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at INTEGER)`)
+      for (const m of MIGRATIONS) {
+        if (m.id === '015-deployment-kind') break
+        raw.exec(m.sql)
+        raw.prepare('INSERT INTO schema_migrations (id) VALUES (?)').run(m.id)
+      }
+      const insertConn = raw.prepare(
+        `INSERT INTO connections (id, label, cli_alias, username, org_id, instance_url, role, auth_kind, cli_status, is_sandbox)
+         VALUES (?,?,?,?,?,?,?,'cli','Connected',1)`
+      )
+      insertConn.run('src', 'src', 'src', 's@x.io', '00Dsrc', 'https://src.my.salesforce.com', 'source')
+      insertConn.run('tgt', 'tgt', 'tgt', 't@x.io', '00Dtgt', 'https://tgt.my.salesforce.com', 'target')
+      raw
+        .prepare(
+          `INSERT INTO deployments (name, source_connection_id, target_connection_id, status) VALUES ('Legacy','src','tgt','Planned')`
+        )
+        .run()
+      raw.close()
+
+      const s = new Store(dbPath)
+      const legacy = s.listDrafts()
+      expect(legacy).toHaveLength(1)
+      expect(legacy[0]!.kind).toBe('data')
+      expect(s.loadDraft(legacy[0]!.id)!.kind).toBe('data')
+      // and a NEW row can be a sandboxSetup after the migration
+      const setupId = s.createDeployment({
+        name: 'post-migration setup',
+        sourceConnectionId: 'src',
+        targetConnectionId: 'tgt',
+        kind: 'sandboxSetup'
+      })
+      expect(s.loadDraft(setupId)!.kind).toBe('sandboxSetup')
+      s.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('S72 — data-less setup terminal writers + startup reconciliation', () => {
+  const newSetup = (): number =>
+    store.createDeployment({
+      name: 'setup',
+      sourceConnectionId: 'src',
+      targetConnectionId: 'tgt',
+      kind: 'sandboxSetup',
+      // D2 explicit OFF → data-less
+      includeData: false
+    })
+
+  it('markSetupCompleted moves Deploying → Completed and clears the error', () => {
+    const id = newSetup()
+    store.markDeployStarted(id)
+    store.markSetupFailed(id, 'midway break')
+    expect(status(id)).toBe('Failed')
+    // a second attempt
+    store.markDeployStarted(id)
+    store.markSetupCompleted(id)
+    expect(status(id)).toBe('Completed')
+    expect(error(id)).toBeNull()
+  })
+
+  it('markSetupFailed writes the note; markSetupCompleted only acts on a Deploying row', () => {
+    const id = newSetup()
+    store.markDeployStarted(id)
+    store.markSetupFailed(id, 'Stage "LD dev sandbox" blocked: seed objects non-empty')
+    expect(status(id)).toBe('Failed')
+    expect(error(id)).toMatch(/blocked/)
+    // The completed writer is scoped to 'Deploying' — a Failed row is untouched
+    store.markSetupCompleted(id)
+    expect(status(id)).toBe('Failed')
+  })
+
+  it('a busy data-less setup with no run row sweeps to Failed with the SETUP interruption note', () => {
+    const id = newSetup()
+    store.markDeployStarted(id)
+    // data-less: no deploy_runs row is ever created for the attempt
+    const swept = store.reconcileOnStartup()
+    expect(swept.interruptedAttempts).toBe(1)
+    expect(status(id)).toBe('Failed')
+    expect(error(id)).toBe(INTERRUPTED_SETUP_MESSAGE)
+    // …and the data-kind note stays what it was (copy regression guard)
+    const dataId = newDeployment()
+    store.markDeployStarted(dataId)
+    store.reconcileOnStartup()
+    expect(error(dataId)).toBe(INTERRUPTED_BEFORE_RUN_MESSAGE)
   })
 })

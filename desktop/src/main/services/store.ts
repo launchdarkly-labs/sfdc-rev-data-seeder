@@ -12,6 +12,7 @@
 import Database from 'better-sqlite3'
 import type {
   DeploymentHeader,
+  DeploymentKind,
   DeploymentSummary,
   DraftDetail,
   OrgConnection,
@@ -25,7 +26,7 @@ import type { DraftCreateResult, RoleAssignment } from '../../shared/types'
 import { rolesToAssign } from '../../shared/roles'
 import type { WizardConfig, WizardStep } from '../../shared/wizard'
 import { canDeleteDeployment, emptyWizardConfig } from '../../shared/wizard'
-import { INTERRUPTED_BEFORE_RUN_MESSAGE } from '../../shared/recoveryCopy'
+import { INTERRUPTED_BEFORE_RUN_MESSAGE, INTERRUPTED_SETUP_MESSAGE } from '../../shared/recoveryCopy'
 import { transition } from '../engine/deploy/stateMachine'
 import type { AnalysisResult } from '../engine/analysis'
 import type { DeploymentObjectRow } from '../planMapping'
@@ -902,6 +903,20 @@ export const MIGRATIONS: { id: string; sql: string }[] = [
       CREATE INDEX idx_ledger_run_restore
         ON automation_ledger_mirror(run_uuid, restore_confirmed);
     `
+  },
+  {
+    // 015 — S72: deployment TYPES. `deployments.kind` distinguishes the two
+    // ways a deployment starts: 'data' (today's record-graph copy — the
+    // default and byte-for-byte the pre-S72 behaviour for every existing
+    // row) and 'sandboxSetup' (templates first, data optional; a data-less
+    // setup runs template stages with NO deploy_runs row, so its terminal
+    // status needs the S72 writers in store.ts). A column, not draft JSON:
+    // the list, the wizard step rules and the run starter branch on it, and
+    // a Draft's config is rewritten on every wizard save.
+    id: '015-deployment-kind',
+    sql: `
+      ALTER TABLE deployments ADD COLUMN kind TEXT NOT NULL DEFAULT 'data';
+    `
   }
 ]
 
@@ -1359,16 +1374,34 @@ export class Store implements OAuthTokenStore {
     targetConnectionId: string
     /** S61 (U-5): false seeds the draft config as KEYLESS (id-map) from its first instant. */
     useExternalIds?: boolean
+    /** S72: the deployment type, fixed for the life of the row (D1). Defaults to 'data'. */
+    kind?: DeploymentKind
+    /** S72 (D2): a sandbox setup's data stage; false = template stages only. Default ON. */
+    includeData?: boolean
   }): number {
     // The choice is made at creation and must survive every wizard step, so the draft config is
     // seeded here rather than left for the first draftSave (which would carry the default).
-    const config = { ...emptyWizardConfig(), useExternalIds: input.useExternalIds !== false }
+    const kind = input.kind ?? 'data'
+    const includeData = input.includeData ?? true
+    const config = {
+      ...emptyWizardConfig(),
+      useExternalIds: input.useExternalIds !== false,
+      // S72 (D2): a sandbox setup's data stage is optional, default ON; only
+      // meaningful for kind 'sandboxSetup' (readers default ?? true).
+      includeData: kind === 'sandboxSetup' ? includeData : undefined
+    }
     const info = this.db
       .prepare(
-        `INSERT INTO deployments (name, source_connection_id, target_connection_id, status, wizard_step, draft_config)
-         VALUES (?, ?, ?, 'Draft', 'orgs', ?)`
+        `INSERT INTO deployments (name, source_connection_id, target_connection_id, status, wizard_step, draft_config, kind)
+         VALUES (?, ?, ?, 'Draft', 'orgs', ?, ?)`
       )
-      .run(input.name, input.sourceConnectionId, input.targetConnectionId, JSON.stringify(config))
+      .run(
+        input.name,
+        input.sourceConnectionId,
+        input.targetConnectionId,
+        JSON.stringify(config),
+        kind
+      )
     return Number(info.lastInsertRowid)
   }
 
@@ -1384,6 +1417,10 @@ export class Store implements OAuthTokenStore {
     sourceConnectionId: string
     targetConnectionId: string
     useExternalIds?: boolean
+    /** S72: the deployment type ('data' default | 'sandboxSetup'), fixed at creation (D1). */
+    kind?: DeploymentKind
+    /** S72 (D2): a sandbox setup's data stage; false = template stages only. Default ON. */
+    includeData?: boolean
   }): DraftCreateResult {
     const tx = this.db.transaction((): DraftCreateResult => {
       const assigned = this.applyRoleAssignment(input.sourceConnectionId, input.targetConnectionId)
@@ -1438,7 +1475,7 @@ export class Store implements OAuthTokenStore {
     const row = this.db
       .prepare(
         `SELECT d.name, d.source_connection_id, d.target_connection_id, d.wizard_step,
-                d.draft_config, d.status, sc.label AS source_label, tc.label AS target_label
+                d.draft_config, d.status, d.kind, sc.label AS source_label, tc.label AS target_label
          FROM deployments d
          LEFT JOIN connections sc ON sc.id = d.source_connection_id
          LEFT JOIN connections tc ON tc.id = d.target_connection_id
@@ -1452,6 +1489,7 @@ export class Store implements OAuthTokenStore {
           wizard_step: string | null
           draft_config: string | null
           status: string
+          kind: string | null
           source_label: string | null
           target_label: string | null
         }
@@ -1466,6 +1504,7 @@ export class Store implements OAuthTokenStore {
       targetConnectionId: row.target_connection_id,
       sourceLabel: row.source_label ?? row.source_connection_id,
       targetLabel: row.target_label ?? row.target_connection_id,
+      kind: row.kind === 'sandboxSetup' ? 'sandboxSetup' : 'data',
       step: (row.wizard_step as WizardStep | null) ?? 'orgs',
       config,
       status: row.status
@@ -1484,7 +1523,7 @@ export class Store implements OAuthTokenStore {
     const rows = this.db
       .prepare(
         `SELECT d.id, d.name, d.source_connection_id, d.target_connection_id, d.status, d.error_message,
-                d.wizard_step, d.analyzed_at, d.created_at, d.updated_at,
+                d.wizard_step, d.analyzed_at, d.created_at, d.updated_at, d.kind,
                 sc.label AS source_label, tc.label AS target_label,
                 (SELECT COUNT(*) FROM deployment_objects o WHERE o.deployment_id = d.id) AS total_objects,
                 (SELECT COALESCE(SUM(o.scoped_record_count), 0) FROM deployment_objects o WHERE o.deployment_id = d.id) AS total_records,
@@ -1507,6 +1546,7 @@ export class Store implements OAuthTokenStore {
       targetConnectionId: String(r.target_connection_id),
       sourceLabel: String(r.source_label ?? r.source_connection_id),
       targetLabel: String(r.target_label ?? r.target_connection_id),
+      kind: r.kind === 'sandboxSetup' ? 'sandboxSetup' : 'data',
       status: String(r.status),
       errorMessage: r.error_message != null ? String(r.error_message) : null,
       wizardStep: (r.wizard_step as WizardStep | null) ?? null,
@@ -1531,7 +1571,7 @@ export class Store implements OAuthTokenStore {
     const row = this.db
       .prepare(
         `SELECT d.id, d.name, d.status, d.error_message, d.created_at, d.updated_at,
-                d.source_connection_id, d.target_connection_id,
+                d.source_connection_id, d.target_connection_id, d.kind,
                 sc.label AS source_label, tc.label AS target_label
          FROM deployments d
          LEFT JOIN connections sc ON sc.id = d.source_connection_id
@@ -1547,6 +1587,7 @@ export class Store implements OAuthTokenStore {
       errorMessage: row.error_message != null ? String(row.error_message) : null,
       sourceLabel: String(row.source_label ?? row.source_connection_id),
       targetLabel: String(row.target_label ?? row.target_connection_id),
+      kind: row.kind === 'sandboxSetup' ? 'sandboxSetup' : 'data',
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at)
     }
@@ -1610,18 +1651,35 @@ export class Store implements OAuthTokenStore {
         transition(this.deploy, run.id, 'Stalled')
         stalledRuns++
       }
+      // S72: a data-less sandbox setup has NO deploy_runs row ever, so this
+      // sweep is also its crash recovery — but its template stages DID touch
+      // the target, so it gets its own message (the data-kind copy says
+      // "nothing on the target was touched", which would be a lie here).
+      const setupInfo = this.db
+        .prepare(
+          `UPDATE deployments
+             SET status = 'Failed', error_message = @msg, current_run_id = NULL, updated_at = @now
+           WHERE kind = 'sandboxSetup'
+             AND status IN ('Deploying', 'Retrying', 'Disabling Automation', 'Restoring Automation')
+             AND NOT EXISTS (
+               SELECT 1 FROM deploy_runs r
+               WHERE r.deployment_id = deployments.id
+                 AND r.phase NOT IN ('Completed', 'Failed', 'Cancelled'))`
+        )
+        .run({ msg: INTERRUPTED_SETUP_MESSAGE, now: Date.now() })
       const info = this.db
         .prepare(
           `UPDATE deployments
              SET status = 'Failed', error_message = @msg, current_run_id = NULL, updated_at = @now
-           WHERE status IN ('Deploying', 'Retrying', 'Disabling Automation', 'Restoring Automation')
+           WHERE kind IS NOT 'sandboxSetup'
+             AND status IN ('Deploying', 'Retrying', 'Disabling Automation', 'Restoring Automation')
              AND NOT EXISTS (
                SELECT 1 FROM deploy_runs r
                WHERE r.deployment_id = deployments.id
                  AND r.phase NOT IN ('Completed', 'Failed', 'Cancelled'))`
         )
         .run({ msg: INTERRUPTED_BEFORE_RUN_MESSAGE, now: Date.now() })
-      return info.changes
+      return info.changes + setupInfo.changes
     })
     const interruptedAttempts = sweep()
     // S59: template runs the app died inside are provably dead too (no job
@@ -1655,6 +1713,35 @@ export class Store implements OAuthTokenStore {
          WHERE id = ? AND status = 'Deploying'`
       )
       .run(Date.now(), deploymentId)
+  }
+
+  // ── S72 — terminal writers for a DATA-LESS sandbox setup ───────────────────
+  // A data-less setup never creates a deploy_runs row, so the single-writer
+  // contract ("while a run exists, only setRunPhase moves status") does not
+  // apply: these are the ONLY writers, scoped to the 'Deploying' the job
+  // start wrote, mirroring markDeployFailedBeforeRun's shape. A sandboxSetup
+  // WITH its data stage never reaches them — its data run owns the status.
+
+  /** Every template stage ended clean or partial → 'Completed'. Scoped to a
+   *  'Deploying' row like its siblings — a row some other writer already moved
+   *  (a cancel raced the last stage) is left alone, not "corrected". */
+  markSetupCompleted(deploymentId: number): void {
+    this.db
+      .prepare(
+        `UPDATE deployments SET status = 'Completed', error_message = NULL, updated_at = ?
+         WHERE id = ? AND status = 'Deploying'`
+      )
+      .run(Date.now(), deploymentId)
+  }
+
+  /** A template stage ended blocked/failed → 'Failed' with the stage's note. */
+  markSetupFailed(deploymentId: number, note: string): void {
+    this.db
+      .prepare(
+        `UPDATE deployments SET status = 'Failed', error_message = ?, updated_at = ?
+         WHERE id = ? AND status = 'Deploying'`
+      )
+      .run(note, Date.now(), deploymentId)
   }
 
   /**

@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { SETTING_KEYS, IPC } from '../shared/types'
 import type { SettingKey } from '../shared/types'
 import { normalizeSettingValue } from '../shared/settings'
-import type { OrgConnection, OrgRole, OAuthBeginInput, TemplateKind } from '../shared/types'
+import type { OrgConnection, OrgRole, OAuthBeginInput, TemplateKind, DeploymentKind } from '../shared/types'
 import type { WizardConfig, WizardStep } from '../shared/wizard'
 import { listCliOrgs, getCliToken } from './services/sfcli'
 import { connect, verifyIdentity, type GuardedOrg } from './services/salesforce'
@@ -429,8 +429,17 @@ export function registerIpc(store: Store, jobs: JobManager, vault: TokenVault): 
   ipcMain.handle(
     IPC.draftCreate,
     wrapHandler(
-      (_e, input: { name: string; sourceConnectionId: string; targetConnectionId: string; useExternalIds?: boolean }) =>
-        store.createDeploymentAssigningRoles(input)
+      (
+        _e,
+        input: {
+          name: string
+          sourceConnectionId: string
+          targetConnectionId: string
+          useExternalIds?: boolean
+          kind?: DeploymentKind
+          includeData?: boolean
+        }
+      ) => store.createDeploymentAssigningRoles(input)
     )
   )
   // S52 F2: the same write for drafts created before F1 (or after a demotion).

@@ -6,11 +6,12 @@ import {
   isDeployBusy,
   readinessGate,
   readinessGateMessage,
+  stepAllowedFor,
   stepClosedByReadiness,
-  stepIndex,
-  STEP_LABELS,
+  stepLabel,
+  wizardStepsFor,
   type WizardConfig,
-  type WizardStep, isKeyless, visibleWizardSteps } from '../../../../shared/wizard'
+  type WizardStep, isKeyless } from '../../../../shared/wizard'
 import { useToast } from '../../ui/Toast'
 import { StepOrgs } from './StepOrgs'
 import { StepTemplates } from './StepTemplates'
@@ -21,6 +22,7 @@ import { StepMappings } from './StepMappings'
 import { StepFields } from './StepFields'
 import { StepSummary } from './StepSummary'
 import { StepPlan } from './StepPlan'
+import { StepReview } from './StepReview'
 import { createDescribeCache, type DescribeCache } from './describeCache'
 
 /**
@@ -49,6 +51,10 @@ interface WizardContextValue {
   sourceLabel: string
   targetLabel: string
   status: string
+  /** S72: how this deployment starts ('data' | 'sandboxSetup') — drives the step list. */
+  kind: DraftDetail['kind']
+  /** S72: the sandbox setup's data stage (readers default ?? true). */
+  includeData: boolean
   step: WizardStep
   config: WizardConfig
   /** Merge a partial config (or an updater over the freshest config) and
@@ -129,6 +135,11 @@ export function WizardShell(): React.JSX.Element {
   // can sync the latest-value ref without writing a ref during render
   // (react-hooks/refs). The one-commit lag is harmless: `updateConfig` fires on
   // user input, long after commit.
+  //
+  // S72: two fallbacks — the STATUS clamp (kind-aware cap) and the KIND's step
+  // list (a stale 'summary' bookmark on a now-data-less setup lands on 'orgs';
+  // `review` sits after 'summary' in WIZARD_STEPS, so the index clamp alone
+  // cannot catch it).
   const requested = (step as WizardStep) ?? 'orgs'
   const resolvedStep: WizardStep | null =
     draft && config && !isDeployBusy(draft.status)
@@ -136,10 +147,15 @@ export function WizardShell(): React.JSX.Element {
           // S54 (L1): the readiness gate closes every step after Readiness. A
           // direct URL / stale bookmark past the gate lands ON the Readiness step.
           const gate = readinessGate(config)
-          const clamped0 = clampStep(requested, draft.status)
-          // S61 (U-5): a keyless draft has no Readiness step — a stale link to it lands on Mappings.
-          const clamped = isKeyless(config) && clamped0 === 'readiness' ? 'mappings' : clamped0
-          return gate.blocked && stepClosedByReadiness(clamped) ? 'readiness' : clamped
+          let clamped = clampStep(requested, draft.status, draft.kind, config)
+          // S61 (U-5): a keyless draft has no Readiness step — a stale link to
+          // it lands on Mappings. (Before the kind-membership fallback, so the
+          // remap wins over the generic 'orgs' fallback.)
+          if (isKeyless(config) && clamped === 'readiness') clamped = 'mappings'
+          // S72: a step within the cap but not offered by this KIND's wizard
+          // (stale 'summary' bookmark on a now-data-less setup) → first step.
+          if (!stepAllowedFor(clamped, draft.kind, config)) clamped = 'orgs'
+          return gate.blocked && stepClosedByReadiness(clamped, draft.kind, config) ? 'readiness' : clamped
         })()
       : null
   useEffect(() => {
@@ -207,16 +223,18 @@ export function WizardShell(): React.JSX.Element {
   )
 
   const draftStatus = draft?.status
+  const draftKind = draft?.kind
   const goToStep = useCallback(
     (target: WizardStep): void => {
       const live = configRef.current
-      if (!draftStatus || !live) return
-      const clamped0 = clampStep(target, draftStatus)
-      const clamped = isKeyless(live) && clamped0 === 'readiness' ? 'mappings' : clamped0
+      if (!draftStatus || !draftKind || !live) return
+      let clamped = clampStep(target, draftStatus, draftKind, live)
+      if (isKeyless(live) && clamped === 'readiness') clamped = 'mappings'
+      if (!stepAllowedFor(clamped, draftKind, live)) clamped = 'orgs'
       // The gate is read from the LIVE config (a Readiness check that just
       // persisted opens it in the same tick).
       const liveGate = readinessGate(live)
-      const dest = liveGate.blocked && stepClosedByReadiness(clamped) ? 'readiness' : clamped
+      const dest = liveGate.blocked && stepClosedByReadiness(clamped, draftKind, live) ? 'readiness' : clamped
       if (dest !== clamped) toast(readinessGateMessage(liveGate), 'error')
       // Flush: the pending debounced save (if any) is superseded by this write
       // of the freshest config at the destination step — exactly one save.
@@ -224,7 +242,7 @@ export function WizardShell(): React.JSX.Element {
       persistNow(dest, live)
       navigate(`/deployments/${deploymentId}/wizard/${dest}`)
     },
-    [draftStatus, deploymentId, navigate, toast, cancelPendingSave, persistNow]
+    [draftStatus, draftKind, deploymentId, navigate, toast, cancelPendingSave, persistNow]
   )
 
   if (draft === undefined || (draft && !config)) {
@@ -258,7 +276,14 @@ export function WizardShell(): React.JSX.Element {
     )
   }
 
-  const cap = clampStep('plan', draft.status)
+  // S73: the step list is ORDERED per kind (a sandbox setup's Setup step is
+  // second), so the cap and the nav cut are positions in THIS list, never
+  // indexes into WIZARD_STEPS — 'review' sits last in the base tuple and used
+  // to fall off the nav for data-less setups.
+  const visible = wizardStepsFor(draft.kind, config!)
+  // The furthest step this status allows: the kind's last step, clamped.
+  const cap = clampStep(visible[visible.length - 1]!, draft.status, draft.kind, config!)
+  const shown = visible.slice(0, visible.indexOf(cap) + 1)
   const gate = readinessGate(config!)
   // Non-null past the guards above (loaded, config seeded, not busy) — the same
   // condition `resolvedStep` was computed under.
@@ -272,6 +297,8 @@ export function WizardShell(): React.JSX.Element {
     sourceLabel: draft.sourceLabel,
     targetLabel: draft.targetLabel,
     status: draft.status,
+    kind: draft.kind,
+    includeData: draft.config.includeData !== false,
     step: activeStep,
     config: config!,
     updateConfig,
@@ -280,7 +307,6 @@ export function WizardShell(): React.JSX.Element {
     describe: describeCache.describe
   }
 
-  const visible = visibleWizardSteps(config!)
   const stepNumber = visible.indexOf(activeStep) + 1
 
   return (
@@ -302,8 +328,8 @@ export function WizardShell(): React.JSX.Element {
           {draft.sourceLabel} → {draft.targetLabel} · {draft.status} · Step {stepNumber} of {visible.length}
         </p>
         <nav className="wizard-steps">
-          {visible.filter((s) => stepIndex(s) <= stepIndex(cap)).map((s) => {
-            const closed = gate.blocked && stepClosedByReadiness(s)
+          {shown.map((s) => {
+            const closed = gate.blocked && stepClosedByReadiness(s, draft.kind, config!)
             return (
               <button
                 key={s}
@@ -312,7 +338,7 @@ export function WizardShell(): React.JSX.Element {
                 aria-disabled={closed || undefined}
                 title={closed ? readinessGateMessage(gate) : undefined}
               >
-                {STEP_LABELS[s]}
+                {stepLabel(s, draft)}
               </button>
             )
           })}
@@ -328,6 +354,7 @@ export function WizardShell(): React.JSX.Element {
         {activeStep === 'fields' && <StepFields />}
         {activeStep === 'summary' && <StepSummary />}
         {activeStep === 'plan' && <StepPlan />}
+        {activeStep === 'review' && <StepReview />}
       </div>
     </WizardContext.Provider>
   )

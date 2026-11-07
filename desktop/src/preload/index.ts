@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import { IPC } from '../shared/types'
-import type { JobEvent, OrgRole, RdsApi, OAuthBeginInput, TemplateKind } from '../shared/types'
+import type { JobEvent, OrgRole, RdsApi, OAuthBeginInput, TemplateKind, DeploymentKind } from '../shared/types'
 import type { WizardConfig, WizardStep } from '../shared/wizard'
 import type { TemplateRunInput } from '../shared/templates/types'
 
@@ -35,7 +35,7 @@ const api: RdsApi = {
     ipcRenderer.on(IPC.jobEvents, listener)
     return () => ipcRenderer.removeListener(IPC.jobEvents, listener)
   },
-  draftCreate: (input: { name: string; sourceConnectionId: string; targetConnectionId: string; useExternalIds?: boolean }) =>
+  draftCreate: (input: { name: string; sourceConnectionId: string; targetConnectionId: string; useExternalIds?: boolean; kind?: DeploymentKind; includeData?: boolean }) =>
     ipcRenderer.invoke(IPC.draftCreate, input),
   draftSave: (input: { deploymentId: number; step: WizardStep; config: WizardConfig }) =>
     ipcRenderer.invoke(IPC.draftSave, input),

@@ -50,6 +50,7 @@ function summary(over: Partial<DeploymentSummary> = {}): DeploymentSummary {
     targetConnectionId: 'sb1_830',
     sourceLabel: 'srcbox_829',
     targetLabel: 'sb1_830',
+    kind: 'data',
     status: 'Planned',
     errorMessage: null,
     wizardStep: 'plan',

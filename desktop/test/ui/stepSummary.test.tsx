@@ -76,6 +76,7 @@ function installStub(
       sourceConnectionId: 'srcbox',
       targetConnectionId: 'sb1',
       sourceLabel: 'srcbox',
+      kind: 'data',
       targetLabel: 'sb1',
       step: 'summary',
       config: {

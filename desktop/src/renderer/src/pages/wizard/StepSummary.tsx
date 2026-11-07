@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { PlanObjectView, PlanView } from '../../../../shared/types'
-import { nextLabel, readinessGate, readinessGateMessage } from '../../../../shared/wizard'
+import { nextLabel, readinessGate, readinessGateMessage, stepBefore } from '../../../../shared/wizard'
 import { GLOSSARY } from '../../../../shared/labels'
 import { Badge } from '../../ui/Badge'
 import { DataTable, type Column } from '../../ui/DataTable'
@@ -70,7 +70,9 @@ const COLUMNS: Column<PlanObjectView>[] = [
  * the separate Plan step (5C.3).
  */
 export function StepSummary(): React.JSX.Element {
-  const { deploymentId, config, goToStep, refreshDraft } = useWizard()
+  const { deploymentId, config, goToStep, refreshDraft, kind } = useWizard()
+  // S73: Back is Stages for a data deployment, Fields for a sandbox setup (its Setup step came second).
+  const back = stepBefore('summary', kind, config) ?? 'templates'
   const analyze = useIpcMutation((id: number) => window.rds.analyze(id))
   // Track the analysis job via the shared store (keyed by deployment), so a
   // remount or renderer reload re-attaches instead of losing a local jobId.
@@ -206,7 +208,7 @@ export function StepSummary(): React.JSX.Element {
 
       {plan && (
         <div className="toolbar">
-          <button className="btn" onClick={() => goToStep('templates')}>
+          <button className="btn" onClick={() => goToStep(back)}>
             Back
           </button>
           <button

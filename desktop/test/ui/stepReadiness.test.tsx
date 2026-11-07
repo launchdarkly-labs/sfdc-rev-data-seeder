@@ -74,6 +74,7 @@ function installWith(objects: ObjectReadiness[]): void {
       sourceConnectionId: 'srcbox',
       targetConnectionId: 'sb1',
       sourceLabel: 'srcbox',
+      kind: 'data',
       targetLabel: 'sb1',
       step: 'readiness',
       config: { ...emptyWizardConfig(), selectedObjects: objects.map((o) => o.objectName) },

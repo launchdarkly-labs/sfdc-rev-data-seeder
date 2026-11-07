@@ -113,6 +113,7 @@ function install(): void {
       sourceConnectionId: 'src',
       targetConnectionId: 'tgt',
       sourceLabel: 'src',
+      kind: 'data',
       targetLabel: 'tgt',
       step: 'plan',
       config: {

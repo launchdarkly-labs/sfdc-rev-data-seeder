@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Template, TemplateKind } from '../../../../shared/types'
-import { nextLabel, reconcileObjectsTemplate } from '../../../../shared/wizard'
+import { nextLabel, reconcileObjectsTemplate, stepBefore } from '../../../../shared/wizard'
 import { callIpc, toRdsError } from '../../ipc/client'
 import { useIpcQuery } from '../../ipc/hooks'
 import { Loading } from '../../ui/Loading'
@@ -32,7 +32,9 @@ const OBJECTS_KIND: TemplateKind = 'objects'
  * would re-couple what that split deliberately separated.
  */
 export function StepObjects(): React.JSX.Element {
-  const { sourceConnectionId, targetConnectionId, config, updateConfig, goToStep } = useWizard()
+  const { sourceConnectionId, targetConnectionId, config, updateConfig, goToStep, kind } = useWizard()
+  // S73: Back goes to Setup for a sandbox setup (its Setup step precedes Objects), to Orgs otherwise.
+  const back = stepBefore('objects', kind, config) ?? 'orgs'
   const { data, loading, error, refetch } = useIpcQuery(
     () => window.rds.objectsIntersection({ sourceConnectionId, targetConnectionId }),
     [sourceConnectionId, targetConnectionId]
@@ -271,7 +273,7 @@ export function StepObjects(): React.JSX.Element {
 
           {/* UI-3: the toolbar is inside the busy guard like every other step. */}
           <div className="toolbar">
-            <button className="btn" disabled={templateBusy} onClick={() => goToStep('orgs')}>
+            <button className="btn" disabled={templateBusy} onClick={() => goToStep(back)}>
               Back
             </button>
             <button

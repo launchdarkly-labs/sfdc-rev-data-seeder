@@ -89,6 +89,16 @@ export interface RoleAssignment {
   target: boolean
 }
 
+/**
+ * S72 — how a deployment starts. Chosen on the New Deployment page and FIXED
+ * for the life of the row (D1, same rule as source/target): 'data' is today's
+ * record-graph copy (the default; existing rows read as 'data'), 'sandboxSetup'
+ * runs templates first with the data stage optional (D2) — without it, the
+ * run is template stages only and never creates a deploy_runs row.
+ */
+export const DEPLOYMENT_KINDS = ['data', 'sandboxSetup'] as const
+export type DeploymentKind = (typeof DEPLOYMENT_KINDS)[number]
+
 export interface DraftCreateResult {
   id: number
   assigned: RoleAssignment
@@ -233,6 +243,8 @@ export interface DeploymentSummary {
   /** Connection labels (JOINed) for display without a second fetch. */
   sourceLabel: string
   targetLabel: string
+  /** S72: how this deployment starts ('data' | 'sandboxSetup'); pre-015 rows read as 'data'. */
+  kind: DeploymentKind
   status: string
   /** Full text of the last failure (pre-run gate/freeze refusal or the run's
    *  terminal error); null when the last attempt did not fail (S46 D1). */
@@ -274,6 +286,8 @@ export interface DeploymentHeader {
   errorMessage: string | null
   sourceLabel: string
   targetLabel: string
+  /** S72: how this deployment starts ('data' | 'sandboxSetup'). */
+  kind: DeploymentKind
   createdAt: number
   updatedAt: number
 }
@@ -418,6 +432,8 @@ export interface DraftDetail {
   targetConnectionId: string
   sourceLabel: string
   targetLabel: string
+  /** S72: how this deployment starts; drives the wizard step list and the run starter. */
+  kind: DeploymentKind
   step: WizardStep
   config: WizardConfig
   status: string
@@ -823,13 +839,17 @@ export interface RdsApi {
    * the pick just assigned (S52 F1 — an unassigned org picked as source/target
    * becomes that role; rows that already have a role are never changed).
    */
-  draftCreate(input: {
-    name: string
-    sourceConnectionId: string
-    targetConnectionId: string
-    /** S61 (U-5): false = keyless (id-map) deployment; omitted/true = External Id upsert. */
-    useExternalIds?: boolean
-  }): Promise<DraftCreateResult>
+    draftCreate(input: {
+      name: string
+      sourceConnectionId: string
+      targetConnectionId: string
+      /** S61 (U-5): false = keyless (id-map) deployment; omitted/true = External Id upsert. */
+      useExternalIds?: boolean
+      /** S72: 'data' (default) or 'sandboxSetup' — fixed for the life of the row (D1). */
+      kind?: DeploymentKind
+      /** S72 (D2): a sandbox setup's data stage; false = template stages only. Default ON. */
+      includeData?: boolean
+    }): Promise<DraftCreateResult>
   /** S52 F2: assign the deployment's pair their roles if (and only if) they are unassigned. */
   deploymentAssignRoles(deploymentId: number): Promise<RoleAssignment>
   /** Persist the wizard draft (step + config) for a deployment. */
