@@ -37,7 +37,7 @@
     "@jsforce/jsforce-node": "^3.13.1",
     "better-sqlite3": "^12.4.1",
     "react-router-dom": "^7.18.5",
-    "zustand": "^5.0.16"
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.3",
