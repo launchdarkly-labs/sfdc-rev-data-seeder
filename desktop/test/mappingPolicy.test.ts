@@ -41,19 +41,29 @@ describe('getDefaultStrategy — default-strategy resolution matrix', () => {
     expect(getDefaultStrategy('PricebookEntry', 'OpportunityLineItem', scope)).toBe('directId')
   })
 
-  it('all 7 CPQ catalog objects default to directId', () => {
-    const cpq = [
+  it('CPQ catalog objects: natural key where one exists (S75), Direct ID for the rest', () => {
+    // S75: a config object with a natural key resolves by it by default — right in a
+    // sibling sandbox AND in an org whose config was re-inserted (where Direct ID strips
+    // the field, and Name is not an identity: deployments 68/69).
+    const keyed = [
       'SBQQ__ProductOption__c',
       'SBQQ__Dimension__c',
       'SBQQ__BlockPrice__c',
       'SBQQ__DiscountSchedule__c',
       'SBQQ__DiscountTier__c',
-      'SBQQ__ContractedPrice__c',
-      'SBQQ__Cost__c'
+      'SBQQ__ProductFeature__c'
     ]
-    for (const obj of cpq) {
+    for (const obj of keyed) {
+      expect(getDefaultStrategy(obj, 'SBQQ__QuoteLine__c', scope)).toBe('nameMatch')
+      expect(isStrategyLocked(obj, 'SBQQ__QuoteLine__c', scope)).toBe(false)
+    }
+    // Account-specific price rows have no natural key: still Direct ID.
+    const byId = ['SBQQ__ContractedPrice__c', 'SBQQ__Cost__c']
+    for (const obj of byId) {
       expect(getDefaultStrategy(obj, 'SBQQ__QuoteLine__c', scope)).toBe('directId')
     }
+    // The Suggest probe set is unchanged.
+    const cpq = [...keyed.filter((o) => o !== 'SBQQ__ProductFeature__c'), ...byId]
     expect(cpq.every((o) => DIRECT_ID_DEFAULT_REFS.has(o))).toBe(true)
   })
 

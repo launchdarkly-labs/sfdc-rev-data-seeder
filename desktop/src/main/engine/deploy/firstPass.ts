@@ -124,8 +124,25 @@ export async function runFirstPass(plan: DeployPlan, ctx: ObjectPassContext): Pr
     )
   }
 
-  const octx = await buildObjectContext(objPlan, io)
+  const octx = await buildObjectContext(objPlan, io, ctx.runId)
+  try {
+    await walkFirstPass(plan, objPlan, octx, ctx)
+  } finally {
+    // S75: one line per natural-key lookup that left values empty — on every
+    // exit path (cancel, empty continuation page, throw), never silently.
+    logNaturalKeyDrops(io, ctx.runId, objectName, octx)
+  }
+}
 
+/** The page walk of one object's first pass (split out so the S75 drop log wraps every exit). */
+async function walkFirstPass(
+  plan: DeployPlan,
+  objPlan: FrozenObjectPlan,
+  octx: ObjectDeployContext,
+  ctx: ObjectPassContext
+): Promise<void> {
+  const io = ctx.io
+  const objectName = objPlan.objectName
   let batchNumber = 0
   let sawRecords = false
   // S50 (B2): the frozen plan's idChunks were sized for `SELECT Id`; this
@@ -170,6 +187,47 @@ export async function runFirstPass(plan: DeployPlan, ctx: ObjectPassContext): Pr
   if (!sawRecords) {
     // DDQ L1755-1767 — nothing on source: log + complete the object.
     log(io, ctx.runId, 'Info', `Skipped ${objectName} — no records on source`)
+  }
+}
+
+/**
+ * S75: count the natural-key lookups of one source record that did not resolve
+ * (the transform drops such a field without a trace) and keep the first reasons.
+ */
+function noteNaturalKeyDrops(octx: ObjectDeployContext, rec: Record<string, unknown>): void {
+  for (const f of octx.naturalKeyFields) {
+    const v = rec[f.apiName]
+    if (v == null || v === '') continue
+    const sourceRef = String(v)
+    if (f.resolution.map[sourceRef] != null) continue
+    let d = octx.naturalKeyDrops.get(f.apiName)
+    if (d == null) {
+      d = { count: 0, samples: [] }
+      octx.naturalKeyDrops.set(f.apiName, d)
+    }
+    d.count++
+    if (d.samples.length < 10) {
+      const why =
+        f.resolution.error != null
+          ? `${f.refObj} could not be read (${f.resolution.error})`
+          : (f.resolution.unresolved[sourceRef] ?? `source ${f.refObj} ${sourceRef} not found (deleted or not visible)`)
+      d.samples.push(`${String(rec['Id'])}: ${why}`)
+    }
+  }
+}
+
+function logNaturalKeyDrops(io: DeployIo, runId: number, objectName: string, octx: ObjectDeployContext): void {
+  for (const f of octx.naturalKeyFields) {
+    const d = octx.naturalKeyDrops.get(f.apiName)
+    if (d == null || d.count === 0) continue
+    log(
+      io,
+      runId,
+      'Warning',
+      `${objectName}.${f.apiName}: ${d.count} record(s) had a ${f.refObj} that did not resolve by natural key on the target — field left empty`,
+      d.samples.join('\n') + (d.count > d.samples.length ? `\n… ${d.count - d.samples.length} more` : ''),
+      { objectName, field: f.apiName }
+    )
   }
 }
 
@@ -277,6 +335,7 @@ export async function processPage(
     // target field enforces a lookup filter. Aggregated so the drop is visible
     // — an unexplained blank TAM is exactly the kind of silent difference this
     // session has been eliminating.
+    noteNaturalKeyDrops(octx, rec)
     for (const f of outcome.droppedFilteredLookups ?? []) {
       aggregatedFilteredLookupDrops.set(f, (aggregatedFilteredLookupDrops.get(f) ?? 0) + 1)
     }

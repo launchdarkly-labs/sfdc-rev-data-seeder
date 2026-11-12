@@ -40,6 +40,13 @@
  */
 
 import { buildNameMatchMaps, type NameMatchIo } from './transform/nameMatch'
+import {
+  resolveNaturalKey,
+  type NaturalKeyCache,
+  type NaturalKeyIo,
+  type NaturalKeyResolution
+} from './transform/naturalKey'
+import { naturalKeyOf } from '../../../shared/mappingPolicy'
 import { buildPrefetchContext, type PrefetchIo } from './transform/prefetch'
 import type { ParentStripIo } from './transform/parentStrip'
 import type { ContractsIo } from './transform/contracts'
@@ -102,6 +109,83 @@ export function nameMatchIoFor(io: DeployIo): NameMatchIo {
       return collectSilent(role === 'source' ? io.querySource(soql) : io.queryTarget(soql))
     }
   }
+}
+
+/** NaturalKeyIo over DeployIo — `SELECT {fields} FROM {object}`, rejections propagate. */
+export function naturalKeyIoFor(io: DeployIo): NaturalKeyIo {
+  return {
+    queryRows(role, objectName, fields): Promise<Array<Record<string, unknown>>> {
+      const soql =
+        'SELECT ' + fields.map((f) => escapeSingleQuotes(f)).join(', ') + ' FROM ' + escapeSingleQuotes(objectName)
+      return collectLoud(role === 'source' ? io.querySource(soql) : io.queryTarget(soql))
+    }
+  }
+}
+
+/**
+ * S75: one natural-key resolution per config object PER RUN. A DeployIo lives
+ * exactly as long as its run, so it keys the cache — every object context and
+ * both passes share the maps, and the resolution is logged once.
+ */
+const naturalKeyCaches = new WeakMap<DeployIo, NaturalKeyCache>()
+
+function naturalKeyCacheFor(io: DeployIo): NaturalKeyCache {
+  let c = naturalKeyCaches.get(io)
+  if (c == null) {
+    c = new Map()
+    naturalKeyCaches.set(io, c)
+  }
+  return c
+}
+
+/**
+ * The run's resolution of one config object by natural key, or `null` when the
+ * object has none. First use per run logs the outcome: how many source rows
+ * matched, and a Warning for a failed query or ambiguous keys.
+ */
+export function naturalKeyResolutionFor(
+  io: DeployIo,
+  refObj: string,
+  runId?: number
+): Promise<NaturalKeyResolution> | null {
+  if (naturalKeyOf(refObj) == null) return null
+  const cache = naturalKeyCacheFor(io)
+  const first = !cache.has(refObj)
+  const p = resolveNaturalKey(naturalKeyIoFor(io), refObj, cache)
+  if (first) {
+    void p.then((r) => {
+      const matched = Object.keys(r.map).length
+      const data: Record<string, unknown> = { objectName: refObj }
+      if (runId != null) data.runId = runId
+      if (r.error != null) {
+        io.emit({
+          kind: 'log',
+          data: {
+            ...data,
+            level: 'Warning',
+            message: `Natural key ${refObj}: could not be read (${r.error}) — every lookup to ${refObj} is left empty`
+          }
+        })
+        return
+      }
+      const reasons = Object.values(r.unresolved)
+      io.emit({
+        kind: 'log',
+        data: {
+          ...data,
+          level: r.ambiguousKeys > 0 ? 'Warning' : 'Info',
+          message:
+            `Natural key ${refObj}: ${matched} of ${r.sourceRows} source row(s) matched on the target (${r.targetRows} row(s) there)` +
+            (r.ambiguousKeys > 0 ? `, ${r.ambiguousKeys} ambiguous key(s) not linked` : ''),
+          detail:
+            r.ambiguousKeys > 0
+              ? reasons.filter((x) => x.includes('ambiguous')).slice(0, 10).join('\n')
+              : null
+        }
+      })
+    })
+  }
+  return p
 }
 
 /** PrefetchIo over DeployIo — rejections propagate (prefetch owns loud/open). */
@@ -183,11 +267,20 @@ export interface ObjectDeployContext {
    * spans every page of the object's pass, not just one batch.
    */
   uniqueKeySeen: Map<string, string>
+  /**
+   * S75: the kept reference fields resolved by natural key, with the resolution
+   * each one reads — so a source value that did not resolve can be counted and
+   * explained instead of vanishing (a Name Match miss just drops the field).
+   */
+  naturalKeyFields: Array<{ apiName: string; refObj: string; resolution: NaturalKeyResolution }>
+  /** S75: field → unresolved count + first reasons, accumulated across the object's pages. */
+  naturalKeyDrops: Map<string, { count: number; samples: string[] }>
 }
 
 export async function buildObjectContext(
   objPlan: FrozenObjectPlan,
-  io: DeployIo
+  io: DeployIo,
+  runId?: number
 ): Promise<ObjectDeployContext> {
   const objectName = objPlan.objectName
   const sourceFields = await io.describeSource(objectName)
@@ -255,7 +348,25 @@ export async function buildObjectContext(
     mappings[apiName] = { strategy: m.strategy, matchField: m.matchField, customValue: m.customValue }
   }
 
-  const nameMatchMaps = await buildNameMatchMaps(nameMatchIoFor(io), objectName, keptFields, mappings)
+  const nameMatchMaps = await buildNameMatchMaps(
+    nameMatchIoFor(io),
+    objectName,
+    keptFields,
+    mappings,
+    (refObj) => naturalKeyResolutionFor(io, refObj, runId)?.then((r) => r.map) ?? null
+  )
+  // S75: remember which kept fields ride a natural key (cached — no second query).
+  const naturalKeyFields: ObjectDeployContext['naturalKeyFields'] = []
+  for (const fi of keptFields) {
+    if (!fi.isReference) continue
+    const refObj = fi.referenceTo?.[0]
+    if (refObj == null) continue
+    const cfg = mappings[fi.apiName]
+    if (cfg == null || !ciEquals(cfg.strategy, 'nameMatch')) continue
+    const pending = naturalKeyResolutionFor(io, refObj, runId)
+    if (pending == null) continue
+    naturalKeyFields.push({ apiName: fi.apiName, refObj, resolution: await pending })
+  }
   const bundle = await buildPrefetchContext(
     prefetchIoFor(io),
     objectName,
@@ -289,6 +400,8 @@ export async function buildObjectContext(
     targetFields,
     sourceHasIsPersonAccount,
     tctx,
-    uniqueKeySeen: new Map<string, string>()
+    uniqueKeySeen: new Map<string, string>(),
+    naturalKeyFields,
+    naturalKeyDrops: new Map()
   }
 }

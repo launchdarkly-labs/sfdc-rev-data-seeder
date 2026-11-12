@@ -294,6 +294,20 @@ class WalkState {
       }
       this.checkCancel()
     }
+    // S75: the lookup population check — read-only, after everything that
+    // writes lookups. A populated-on-source lookup that is empty on every
+    // deployed row is an Error line + a stored finding, NOT a failed teardown:
+    // contracts must still activate and automation must still be restored. A
+    // check that cannot run is a Warning, never a reason to fail the load.
+    if (this.passes.populationCheck) {
+      try {
+        await this.passes.populationCheck(this.runId, this.io)
+      } catch (e) {
+        if (e instanceof CancelSignal) throw e
+        this.log('Warning', `Lookup population check did not complete: ${errorDetail(e)}`)
+      }
+      this.checkCancel()
+    }
     return this.teardown('completed')
   }
 

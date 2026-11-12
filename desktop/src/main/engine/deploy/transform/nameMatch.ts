@@ -184,7 +184,14 @@ export async function buildNameMatchMaps(
   io: NameMatchIo,
   objectName: string,
   fields: ReadonlyArray<GoldenFieldInfo>,
-  mappings: Record<string, GoldenMapping>
+  mappings: Record<string, GoldenMapping>,
+  /**
+   * S75 (desktop-only, absent from the Apex): returns the `sourceId → targetId`
+   * map for a referenced CONFIG object that has a natural key, or `null` for
+   * every other object. When it answers, the name-field resolve below is not
+   * run for that object — see transform/naturalKey.ts.
+   */
+  naturalKey?: (refObj: string) => Promise<Record<string, string>> | null
 ): Promise<Record<string, Record<string, string>>> {
   const maps: Record<string, Record<string, string>> = {}
   let objectHasRecordTypeId = false
@@ -203,6 +210,12 @@ export async function buildNameMatchMaps(
     const cfg = mappings != null ? mappings[fi.apiName] : undefined
     if (cfg == null || !ciEquals(cfg.strategy, 'nameMatch')) continue
     if (Object.prototype.hasOwnProperty.call(maps, refObj)) continue // already resolved
+
+    const byKey = naturalKey?.(refObj) ?? null
+    if (byKey != null) {
+      maps[refObj] = await byKey
+      continue
+    }
 
     const objContext = ciEquals(refObj, 'RecordType') ? objectName : null
     maps[refObj] = await resolveNameMatch(io, refObj, cfg.matchField, objContext)

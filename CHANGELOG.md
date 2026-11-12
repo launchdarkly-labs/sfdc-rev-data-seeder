@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### CPQ config lookups resolve by natural key (S75)
+- **The bug.** A data deployment into a sandbox whose CPQ configuration was inserted (not sandbox-copied) landed every
+  `SBQQ__ProductOption__c` and `SBQQ__Dimension__c` lookup on Subscription and Quote Line empty. Those lookups were on
+  Name Match by `Name`: Product Option's name is an auto-number, so nothing matched, and a Name Match miss dropped the
+  field without a log line. In the Configure Products screen every seeded bundle showed no option selected.
+- **Natural keys.** A lookup to a CPQ config object on Name Match now resolves by that object's own key, read from the
+  source config row: Product Option by (Configured SKU, Optional SKU), Dimension and Product Feature by (product, name),
+  Discount Tier by (schedule, number, lower bound), Block Price by (product, lower bound, upper bound), Discount Schedule
+  by name. Lookup parts of a key are translated to the target first. A key shared by several target rows is settled by
+  the tie-break field where one exists (Product Option: number) and is otherwise left empty — never last-wins.
+- **Nothing is dropped silently.** Each config object logs how many source rows matched; each lookup field that left
+  values empty logs a warning with the count and the reason per record (missing key, ambiguous key, unreadable object).
+- **Defaults.** These config objects default to the natural key instead of Direct ID, and Suggest no longer flips them.
+  A saved Direct ID choice is still honoured. The Mappings step shows the key in place of the match-field box.
+- **Lookup population check.** New step at the end of every data run (after the relink, before contracts activate): for
+  every lookup field on every deployed object — mapped or not — rows with a value on the source against rows with a
+  value on the target. A mapped lookup that is populated on the source and empty on every deployed row fails the check:
+  an error in the log, a red banner and a table on the deployment page. Skipped and not-in-plan fields are listed as
+  "not deployed"; partly populated fields as warnings. The run still finishes its teardown. Read-only on both orgs
+  (migration 016 stores the result).
+
 ## 0.4.3 — 2026-11-07
 
 ### Deployment types (S72, reviewed and hardened S73)

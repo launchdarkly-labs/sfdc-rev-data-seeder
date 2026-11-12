@@ -11,6 +11,8 @@ import {
   isStrategyLocked,
   isUnlockedByTargetKey,
   lockBadge,
+  naturalKeyLabel,
+  naturalKeyOf,
   reconcileTemplateMappings,
   strategyOptionsFor,
   targetKeyProbeCandidates,
@@ -152,6 +154,9 @@ export function StepMappings(): React.JSX.Element {
         const objMap = { ...(nextMappings[obj] ?? {}) }
         for (const rf of refFields) {
           if (!DIRECT_ID_DEFAULT_REFS.has(rf.refTo)) continue
+          // S75: a config object with a natural key keeps it — the key is right whether or
+          // not the two orgs share Ids, and a 5-Id sample must not flip it to Direct ID.
+          if (naturalKeyOf(rf.refTo) != null) continue
           if (isStrategyLocked(rf.refTo, obj, objects)) continue
           const verdict = s.recommendationByObject[rf.refTo] ?? s.recommendation
           objMap[rf.fieldName] = { ...(objMap[rf.fieldName] ?? {}), strategy: verdict }
@@ -765,7 +770,16 @@ interface DetailCellProps {
 const DetailCell = memo(function DetailCell(props: DetailCellProps): React.JSX.Element {
   const { objectName, field, effective, matchField, customValue, targetUserLabel } = props
   switch (effective) {
-    case 'nameMatch':
+    case 'nameMatch': {
+      // S75: config objects resolve by their natural key, not by a name field.
+      const keyLabel = naturalKeyLabel(field.refTo)
+      if (keyLabel != null) {
+        return (
+          <span className="map-detail muted" title="Resolved from the source config row's own key; an ambiguous or missing key is logged and left empty, never guessed.">
+            matched by natural key: {keyLabel}
+          </span>
+        )
+      }
       return (
         <label className="map-detail">
           matched by{' '}
@@ -783,6 +797,7 @@ const DetailCell = memo(function DetailCell(props: DetailCellProps): React.JSX.E
           />
         </label>
       )
+    }
     case 'customId':
       return (
         <label className="map-detail">

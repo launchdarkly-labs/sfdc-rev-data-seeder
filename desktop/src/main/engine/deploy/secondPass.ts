@@ -66,7 +66,7 @@ import {
 } from './transform/apexSemantics'
 import { EXTERNAL_ID_FIELD, generateExternalId, reverse } from './transform/sfid'
 import { buildInClause, chunkIds, maxIdsForSoql } from '../scoping'
-import { nameMatchIoFor, parentStripIoFor } from './objectContext'
+import { nameMatchIoFor, naturalKeyResolutionFor, parentStripIoFor } from './objectContext'
 import type { DescribeField } from './transform/fieldFilter'
 import type { DeployPlan, FrozenObjectPlan } from './planFreeze'
 import type {
@@ -113,6 +113,12 @@ export async function runSecondPass(plan: DeployPlan, ctx: ObjectPassContext): P
     if (cfg == null || !ciEquals(cfg.strategy, 'nameMatch')) continue
     const refObj = fi.referenceTo[0]!
     if (Object.prototype.hasOwnProperty.call(nameMatchMaps, refObj)) continue
+    // S75: a config object with a natural key never resolves by a name field.
+    const byKey = naturalKeyResolutionFor(io, refObj, ctx.runId)
+    if (byKey != null) {
+      nameMatchMaps[refObj] = (await byKey).map
+      continue
+    }
     const objContext = ciEquals(refObj, 'RecordType') ? objectName : null
     nameMatchMaps[refObj] = await resolveNameMatch(
       nameMatchIoFor(io),

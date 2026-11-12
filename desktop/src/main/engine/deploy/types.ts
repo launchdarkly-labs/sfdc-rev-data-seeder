@@ -196,6 +196,23 @@ export interface TextIdRelinkSummary {
   samples: Array<{ sourceId: string; sourceValue: string; outcome: TextIdRelinkOutcome; reason: string | null }>
 }
 
+/** S75 — the lookup population check (engine/deploy/lookupPopulation.ts). */
+export type LookupPopulationStatus = 'ok' | 'partial' | 'dropped' | 'notDeployed'
+
+/** One reference field's non-null counts over the rows a run deployed, source vs target. */
+export interface LookupPopulationInput {
+  objectApiName: string
+  fieldName: string
+  refObject: string | null
+  /** The frozen mapping strategy; 'notInPlan' for a field the plan does not carry; null when it has no mapping (RecordTypeId). */
+  strategy: string | null
+  sourceRows: number
+  targetRows: number
+  sourceCount: number
+  targetCount: number
+  status: LookupPopulationStatus
+}
+
 export interface OrphanedLinkGroup {
   objectApiName: string
   fieldName: string
@@ -356,6 +373,9 @@ export interface DeployRunStore {
   /** S63: the text-Id relink ledger (text_id_relinks, migration 013). */
   recordTextIdRelinks(runId: number, rows: TextIdRelinkInput[]): void
   textIdRelinkSummary(runId: number): TextIdRelinkSummary[]
+  /** S75: the lookup population check's rows for one object (lookup_population, migration 016) — replaces that object's earlier rows. */
+  recordLookupPopulation(runId: number, objectApiName: string, rows: LookupPopulationInput[]): void
+  lookupPopulation(runId: number): LookupPopulationInput[]
   /** S50 (A5): the run's stripped nillable lookups, grouped for reporting. */
   orphanedLinkSummary(runId: number): OrphanedLinkGroup[]
   skipReasonCounts(runId: number): Array<{ reason: string; count: number }>
@@ -560,6 +580,11 @@ export interface PassExecutors {
    * activation walks the subscription tree). Optional so scripted test executors stay small.
    */
   relinkPass?(runId: number, io: DeployIo): Promise<void>
+  /**
+   * S75: run-level lookup population check, after the relink and before Finalizing. Read-only.
+   * Resolves with the number of mapped lookups that landed empty (`dropped`).
+   */
+  populationCheck?(runId: number, io: DeployIo): Promise<{ dropped: number }>
   /** Automation disable (E4A) — optional until that epic lands. */
   disableAutomation?(runId: number, io: DeployIo): Promise<void>
   /** Finalize: contract activation (SKIPPED on cancel) → CPQ-guard disarm. */

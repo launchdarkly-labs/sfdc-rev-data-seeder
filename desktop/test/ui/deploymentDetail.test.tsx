@@ -840,6 +840,56 @@ describe('DeploymentDetailPage — S63 text-Id relinks', () => {
   })
 })
 
+describe('DeploymentDetailPage — S75 lookup population check', () => {
+  const done = {
+    deployment: { ...base().deployment, status: 'Completed' },
+    run: { id: 7, phase: 'Completed', currentObject: null, currentPass: null, cancelRequested: false, teardownOutcome: 'completed', startedAt: 1, finishedAt: 2 },
+    counters: { recordsQueried: 20, recordsDeployed: 20, recordsFailed: 0, recordsSkipped: 0 }
+  } as const
+  const row = (fieldName: string, status: 'ok' | 'partial' | 'dropped' | 'notDeployed', sourceCount: number, targetCount: number, strategy = 'nameMatch') => ({
+    objectApiName: 'SBQQ__Subscription__c', fieldName, refObject: fieldName, strategy, sourceRows: 1102, targetRows: 1102, sourceCount, targetCount, status
+  })
+
+  it('a mapped lookup that landed empty raises the failed banner and heads the table; clean rows are folded', async () => {
+    state = base({
+      ...done,
+      lookupPopulation: [
+        row('SBQQ__ProductOption__c', 'dropped', 607, 0),
+        row('SBQQ__OrderProduct__c', 'notDeployed', 12, 0, 'skip'),
+        row('SBQQ__Product__c', 'ok', 1102, 1102, 'directId')
+      ]
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'gpr test' })
+    const banner = screen.getByTestId('lookup-check-failed')
+    expect(banner).toHaveTextContent('Lookup check failed.')
+    expect(banner).toHaveTextContent('1 mapped lookup field populated on the source landed empty')
+    expect(banner).toHaveTextContent('SBQQ__Subscription__c.SBQQ__ProductOption__c')
+    const table = screen.getByTestId('lookup-population')
+    expect(table).toHaveTextContent('607')
+    expect(table).toHaveTextContent('Empty on target')
+    expect(table).toHaveTextContent('Not deployed')
+    expect(table).not.toHaveTextContent('SBQQ__Subscription__c.SBQQ__Product__c')
+    fireEvent.click(screen.getByRole('button', { name: 'show 1 clean' }))
+    expect(table).toHaveTextContent('SBQQ__Subscription__c.SBQQ__Product__c')
+  })
+
+  it('all clean → no banner, a one-line pass', async () => {
+    state = base({ ...done, lookupPopulation: [row('SBQQ__Product__c', 'ok', 5, 5, 'directId')] })
+    renderAt()
+    await screen.findByRole('heading', { name: 'gpr test' })
+    expect(screen.queryByTestId('lookup-check-failed')).not.toBeInTheDocument()
+    expect(screen.getByTestId('lookup-population')).toHaveTextContent('All 1 populated lookup fields arrived.')
+  })
+
+  it('no rows (check has not run) → no section', async () => {
+    state = base({ ...done, lookupPopulation: [] })
+    renderAt()
+    await screen.findByRole('heading', { name: 'gpr test' })
+    expect(screen.queryByTestId('lookup-population')).not.toBeInTheDocument()
+  })
+})
+
 describe('DeploymentDetailPage — S64 P3 feedback (F-3 pre-run checklist, F-5 cancel helper, T-5 legend)', () => {
   const hydrateRunning = (): void =>
     act(() =>

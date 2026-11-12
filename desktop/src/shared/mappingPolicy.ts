@@ -69,6 +69,85 @@ export const DIRECT_ID_DEFAULT_REFS: ReadonlySet<string> = new Set([
   'SBQQ__Cost__c'
 ])
 
+/**
+ * S75 — NATURAL KEYS of CPQ configuration objects.
+ *
+ * A lookup to a config record cannot be carried by Id into an org whose CPQ config was
+ * inserted rather than sandbox-copied, and `Name` is not an identity for these objects:
+ * Product Option's is an auto-number, Dimension / Discount Tier names repeat across
+ * parents. Deployments 68/69 (Name Match by `Name`) landed every
+ * `SBQQ__ProductOption__c` / `SBQQ__Dimension__c` lookup on Subscription and Quote Line
+ * empty, with no log line.
+ *
+ * A reference to one of these objects under the `nameMatch` strategy is therefore resolved
+ * by the key below (engine/deploy/transform/naturalKey.ts), read from the SOURCE config row
+ * itself — never by `matchField`:
+ *   - a part with `ref` holds an Id of another object; it is translated to the target
+ *     (same Id when the target has it, else that object's own natural key / unique name)
+ *     before the comparison;
+ *   - `tieBreak` fields are consulted ONLY when several target rows share the key;
+ *   - a key that still matches several target rows, or none, resolves NOTHING and is
+ *     logged. Never last-wins.
+ *
+ * The keys mirror the ones the CPQ config sync already compares records on.
+ */
+export interface NaturalKeyPart {
+  field: string
+  /** The object this field references, when the part is a lookup. */
+  ref?: string
+}
+
+export interface NaturalKeySpec {
+  parts: readonly NaturalKeyPart[]
+  tieBreak?: readonly string[]
+}
+
+export const CONFIG_NATURAL_KEYS: Readonly<Record<string, NaturalKeySpec>> = {
+  SBQQ__ProductOption__c: {
+    parts: [
+      { field: 'SBQQ__ConfiguredSKU__c', ref: 'Product2' },
+      { field: 'SBQQ__OptionalSKU__c', ref: 'Product2' }
+    ],
+    tieBreak: ['SBQQ__Number__c']
+  },
+  SBQQ__Dimension__c: {
+    parts: [{ field: 'SBQQ__Product__c', ref: 'Product2' }, { field: 'Name' }]
+  },
+  SBQQ__ProductFeature__c: {
+    parts: [{ field: 'SBQQ__ConfiguredSKU__c', ref: 'Product2' }, { field: 'Name' }]
+  },
+  SBQQ__DiscountSchedule__c: { parts: [{ field: 'Name' }] },
+  SBQQ__DiscountTier__c: {
+    parts: [
+      { field: 'SBQQ__Schedule__c', ref: 'SBQQ__DiscountSchedule__c' },
+      { field: 'SBQQ__Number__c' },
+      { field: 'SBQQ__LowerBound__c' }
+    ]
+  },
+  SBQQ__BlockPrice__c: {
+    parts: [
+      { field: 'SBQQ__Product__c', ref: 'Product2' },
+      { field: 'SBQQ__LowerBound__c' },
+      { field: 'SBQQ__UpperBound__c' }
+    ]
+  }
+}
+
+/** The natural key of a config object, or null when it has none (→ plain Name Match). */
+export function naturalKeyOf(refTo: string | undefined | null): NaturalKeySpec | null {
+  if (!refTo) return null
+  return Object.prototype.hasOwnProperty.call(CONFIG_NATURAL_KEYS, refTo) ? CONFIG_NATURAL_KEYS[refTo]! : null
+}
+
+/** "Configured SKU + Optional SKU" — the Mappings row's description of the key. */
+export function naturalKeyLabel(refTo: string | undefined | null): string | null {
+  const spec = naturalKeyOf(refTo)
+  if (!spec) return null
+  return spec.parts
+    .map((p) => p.field.replace(/^SBQQ__/, '').replace(/__c$/, ''))
+    .join(' + ')
+}
+
 /** Default nameMatch key per object; anything else falls back to 'Name'. (LWC `DEFAULT_MATCH_FIELDS`.) */
 export const DEFAULT_MATCH_FIELDS: Readonly<Record<string, string>> = {
   RecordType: 'DeveloperName',
@@ -141,6 +220,10 @@ export function getDefaultStrategy(
 ): MappingStrategy {
   if (!refTo) return 'skip'
   if (refTo === currentObject) return 'skip'
+  // S75: a config object with a natural key resolves by that key by default — it is
+  // right in a sibling sandbox (same Ids) AND in an org whose config was re-inserted,
+  // where Direct ID strips the field. Checked BEFORE the Direct ID set on purpose.
+  if (naturalKeyOf(refTo) != null) return 'nameMatch'
   if (DIRECT_ID_DEFAULT_REFS.has(refTo)) return 'directId'
   if (NAME_MATCH_OBJECTS.has(refTo)) return 'nameMatch'
   if (selectedObjects.includes(refTo)) return 'externalId'
@@ -171,6 +254,7 @@ export function isStrategyLocked(
   if (refTo === currentObject) return true
   if (NAME_MATCH_OBJECTS.has(refTo)) return false
   if (DIRECT_ID_DEFAULT_REFS.has(refTo)) return false
+  if (naturalKeyOf(refTo) != null) return false // S75: resolvable by natural key
   if (selectedObjects.includes(refTo)) return false
   // S57 (B1): the target carries the ExtId field on this object, so an
   // externalId reference CAN resolve there — unlock (options: External ID / Skip).
@@ -259,6 +343,7 @@ export function isUnlockedByTargetKey(
   targetKeys?: TargetKeyInfo
 ): boolean {
   if (NAME_MATCH_OBJECTS.has(refTo) || DIRECT_ID_DEFAULT_REFS.has(refTo)) return false
+  if (naturalKeyOf(refTo) != null) return false
   const state = outOfScopeKeyState(refTo, selectedObjects, targetKeys)
   return state === 'keyedRows' || state === 'fieldOnly'
 }
@@ -278,6 +363,7 @@ export function targetKeyProbeCandidates(
     if (!refTo || refTo === currentObject) continue
     if (selectedObjects.includes(refTo)) continue
     if (NAME_MATCH_OBJECTS.has(refTo) || DIRECT_ID_DEFAULT_REFS.has(refTo)) continue
+    if (naturalKeyOf(refTo) != null) continue
     if (!out.includes(refTo)) out.push(refTo)
   }
   return out

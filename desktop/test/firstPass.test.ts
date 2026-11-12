@@ -178,6 +178,10 @@ class FakeRunStore implements DeployRunStore {
     this.strippedRefs.push(...rows)
   }
   recordTextIdRelinks(): void {}
+  recordLookupPopulation(): void {}
+  lookupPopulation(): never[] {
+    return []
+  }
   textIdRelinkSummary(): never {
     throw new Error('unused')
   }

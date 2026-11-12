@@ -16,6 +16,7 @@ import { makeRetryPass } from './retry'
 import { makeSecondPass } from './secondPass'
 import { makeJunctionPass } from './junction'
 import { makeTextIdRelinkPass } from './textIdRelink'
+import { makeLookupPopulationCheck } from './lookupPopulation'
 import type { DeployPlan } from './planFreeze'
 import type { PassExecutors } from './types'
 
@@ -25,6 +26,7 @@ export function makePassExecutors(plan: DeployPlan): PassExecutors {
     retryPass: makeRetryPass(plan),
     secondPass: makeSecondPass(plan),
     junctionPass: makeJunctionPass(plan),
-    relinkPass: makeTextIdRelinkPass(plan)
+    relinkPass: makeTextIdRelinkPass(plan),
+    populationCheck: makeLookupPopulationCheck(plan)
   }
 }

@@ -917,6 +917,33 @@ export const MIGRATIONS: { id: string; sql: string }[] = [
     sql: `
       ALTER TABLE deployments ADD COLUMN kind TEXT NOT NULL DEFAULT 'data';
     `
+  },
+  {
+    // 016 — S75: the lookup population check. One row per (run, object,
+    // reference field) whose source side was populated: the non-null counts
+    // over the rows the run deployed, source vs target. 'dropped' (mapped,
+    // populated on source, empty on every target row) is the failure the
+    // 2026-11-10 seeds shipped with — invisible because every earlier check
+    // looked only at the fields the engine maps.
+    id: '016-lookup-population',
+    sql: `
+      CREATE TABLE lookup_population (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id          INTEGER NOT NULL REFERENCES deploy_runs(id) ON DELETE CASCADE,
+        object_api_name TEXT NOT NULL,
+        field_name      TEXT NOT NULL,
+        ref_object      TEXT,
+        strategy        TEXT,
+        source_rows     INTEGER NOT NULL,
+        target_rows     INTEGER NOT NULL,
+        source_count    INTEGER NOT NULL,
+        target_count    INTEGER NOT NULL,
+        status          TEXT NOT NULL CHECK (status IN ('ok','partial','dropped','notDeployed')),
+        created_at      INTEGER NOT NULL,
+        UNIQUE (run_id, object_api_name, field_name)
+      );
+      CREATE INDEX idx_lookup_population_run ON lookup_population(run_id, status);
+    `
   }
 ]
 

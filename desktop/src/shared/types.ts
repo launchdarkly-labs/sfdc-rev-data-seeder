@@ -361,6 +361,19 @@ export interface TextIdRelinkSummaryView {
   samples: Array<{ sourceId: string; sourceValue: string; outcome: string; reason: string | null }>
 }
 
+/** S75: one reference field's non-null counts over the rows a run deployed (lookup population check). */
+export interface LookupPopulationView {
+  objectApiName: string
+  fieldName: string
+  refObject: string | null
+  strategy: string | null
+  sourceRows: number
+  targetRows: number
+  sourceCount: number
+  targetCount: number
+  status: 'ok' | 'partial' | 'dropped' | 'notDeployed'
+}
+
 /** One plan object with its counters (zeros before/without a run). */
 export interface DeployObjectStateView extends DeployCountersView {
   objectName: string
@@ -422,6 +435,8 @@ export interface DeployRunStateView {
   stages?: DeployStageView[]
   /** S63: the run's text-Id relink roll-up (empty when the plan has no listed text-Id fields). */
   textIdRelinks?: TextIdRelinkSummaryView[]
+  /** S75: the lookup population check's rows (empty when the check has not run). */
+  lookupPopulation?: LookupPopulationView[]
 }
 
 /** A loaded draft: the deployment's fixed orgs + name, plus the resumable

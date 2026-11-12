@@ -5,7 +5,8 @@ import type {
   DeployRunStateView,
   JobSummary,
   DeployStageView,
-  TextIdRelinkSummaryView
+  TextIdRelinkSummaryView,
+  LookupPopulationView
 } from '../../../shared/types'
 import { canDeleteDeployment, canEditPlan, isDeployBusy } from '../../../shared/wizard'
 import {
@@ -202,6 +203,9 @@ export function DeploymentDetailPage(): React.JSX.Element {
   const audit = state.audit
   // S63: the text-Id relink roll-up (fields that hold record Ids as TEXT, relinked after the load).
   const relinks = state.textIdRelinks ?? []
+  // S75: the lookup population check (non-null counts per reference field, source vs target).
+  const lookupRows = state.lookupPopulation ?? []
+  const lookupDropped = lookupRows.filter((r) => r.status === 'dropped')
   const relinkTotals = relinks.reduce(
     (acc, r) => ({ relinked: acc.relinked + r.relinked, unresolved: acc.unresolved + r.unresolved + r.failed }),
     { relinked: 0, unresolved: 0 }
@@ -373,6 +377,18 @@ export function DeploymentDetailPage(): React.JSX.Element {
             <Link to={`/deployments/${deploymentId}/wizard/review`}>Back to review</Link> — fix
             what the stage's report names, then run again (seeds resume from the id map).
           </p>
+        </div>
+      )}
+      {lookupDropped.length > 0 && (
+        <div className="banner error" role="alert" data-testid="lookup-check-failed">
+          <strong>Lookup check failed.</strong> {lookupDropped.length} mapped lookup field
+          {lookupDropped.length === 1 ? '' : 's'} populated on the source landed empty on every deployed row:{' '}
+          {lookupDropped
+            .slice(0, 6)
+            .map((r) => `${r.objectApiName}.${r.fieldName}`)
+            .join(', ')}
+          {lookupDropped.length > 6 ? ` and ${lookupDropped.length - 6} more` : ''}. See the lookup population table
+          below.
         </div>
       )}
       {dataless && status === 'Completed' && (
@@ -599,6 +615,8 @@ export function DeploymentDetailPage(): React.JSX.Element {
 
       {relinks.length > 0 && <RelinkTable rows={relinks} />}
 
+      {lookupRows.length > 0 && <LookupPopulationTable rows={lookupRows} />}
+
       <p className="muted">
         Counters and per-object rows are the persisted truth for the latest run; they update live
         while a run is in progress.
@@ -637,6 +655,75 @@ export function DeploymentDetailPage(): React.JSX.Element {
 }
 
 /** S62 (U-2): the stages of a composed attempt, in run order, each linking to its own report. */
+const LOOKUP_STATUS_LABEL: Record<LookupPopulationView['status'], string> = {
+  dropped: 'Empty on target',
+  partial: 'Partly populated',
+  notDeployed: 'Not deployed',
+  ok: 'OK'
+}
+
+/**
+ * S75: the lookup population check — per reference field, how many of the rows this run deployed
+ * carry a value on the source and on the target. "Empty on target" for a field the plan maps is the
+ * failure; "Not deployed" is a field the plan skips or does not carry. Clean rows are folded away.
+ */
+function LookupPopulationTable({ rows }: { rows: LookupPopulationView[] }): React.JSX.Element {
+  const [showOk, setShowOk] = useState(false)
+  const okCount = rows.filter((r) => r.status === 'ok').length
+  const shown = showOk ? rows : rows.filter((r) => r.status !== 'ok')
+  return (
+    <div className="relinks" data-testid="lookup-population">
+      <h2>Lookup population check</h2>
+      <p className="muted">
+        For every lookup field on the deployed objects: rows with a value on the source against rows with a value
+        on the target, over the rows this run deployed. A mapped lookup that is populated on the source and empty
+        on every target row fails the check.{' '}
+        {okCount > 0 && (
+          <button className="btn btn-small" onClick={() => setShowOk(!showOk)}>
+            {showOk ? 'hide' : 'show'} {okCount} clean
+          </button>
+        )}
+      </p>
+      {shown.length === 0 ? (
+        <p className="muted">All {okCount} populated lookup fields arrived.</p>
+      ) : (
+        <table className="orgs">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Points at</th>
+              <th>Mapping</th>
+              <th className="num">Source</th>
+              <th className="num">Target</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((r) => (
+              <tr key={`${r.objectApiName}.${r.fieldName}`}>
+                <td>
+                  {r.objectApiName}.{r.fieldName}
+                </td>
+                <td>{r.refObject ?? '—'}</td>
+                <td>{r.strategy === 'notInPlan' ? 'not in the plan' : (r.strategy ?? '—')}</td>
+                <td className="num">{r.sourceCount}</td>
+                <td className="num">{r.targetCount}</td>
+                <td
+                  className={
+                    r.status === 'dropped' ? 'status-err' : r.status === 'ok' ? 'status-ok' : 'status-warn'
+                  }
+                >
+                  {LOOKUP_STATUS_LABEL[r.status]}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
 /**
  * S63: one row per (object, field) the relink pass handled. Unresolved values stayed as the
  * SOURCE Id on the target — the samples say which rows and why, so the fix is a scope change

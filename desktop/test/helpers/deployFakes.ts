@@ -11,6 +11,7 @@ import type {
   DeployIo,
   DeployRunStore,
   FailedRecordInput,
+  LookupPopulationInput,
   ObjectPassContext,
   OrphanedLinkGroup,
   QueryPage,
@@ -149,6 +150,13 @@ export class FakeRunStore implements DeployRunStore {
   }
   textIdRelinkSummary(): TextIdRelinkSummary[] {
     return []
+  }
+  lookupRows: LookupPopulationInput[] = []
+  recordLookupPopulation(_runId: number, objectApiName: string, rows: LookupPopulationInput[]): void {
+    this.lookupRows = this.lookupRows.filter((r) => r.objectApiName !== objectApiName).concat(rows)
+  }
+  lookupPopulation(): LookupPopulationInput[] {
+    return this.lookupRows
   }
   orphanedLinkSummary(): OrphanedLinkGroup[] {
     return []

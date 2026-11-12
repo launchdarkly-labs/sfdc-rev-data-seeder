@@ -177,7 +177,8 @@ export function buildDeployRunState(
     },
     job,
     stages: stagesView(store, deploymentId),
-    textIdRelinks: store.deploy.textIdRelinkSummary(run.id)
+    textIdRelinks: store.deploy.textIdRelinkSummary(run.id),
+    lookupPopulation: store.deploy.lookupPopulation(run.id)
   }
 }
 

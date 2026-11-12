@@ -17,6 +17,8 @@ import type {
   DeployStageState,
   FailedRecordInput,
   FrozenPlanRow,
+  LookupPopulationInput,
+  LookupPopulationStatus,
   ObjectCounters,
   OrphanedLinkGroup,
   StrippedRefInput,
@@ -832,6 +834,49 @@ export class DeployStore {
    * "re-run and the link resolves", a parent that never landed means "widen
    * the scope or accept the gap".
    */
+  /** S75: the lookup population rows of one object — replaced wholesale so a resumed check never doubles. */
+  recordLookupPopulation(runId: number, objectApiName: string, rows: LookupPopulationInput[]): void {
+    const del = this.db.prepare(`DELETE FROM lookup_population WHERE run_id = ? AND object_api_name = ?`)
+    const ins = this.db.prepare(
+      `INSERT INTO lookup_population
+         (run_id, object_api_name, field_name, ref_object, strategy, source_rows, target_rows,
+          source_count, target_count, status, created_at)
+       VALUES
+         (@runId, @objectApiName, @fieldName, @refObject, @strategy, @sourceRows, @targetRows,
+          @sourceCount, @targetCount, @status, @createdAt)`
+    )
+    const createdAt = Date.now()
+    const tx = this.db.transaction(() => {
+      del.run(runId, objectApiName)
+      for (const r of rows) ins.run({ ...r, runId, createdAt })
+    })
+    tx()
+  }
+
+  /** S75: the run's lookup population rows — failures first, then warnings, then the clean ones. */
+  lookupPopulation(runId: number): LookupPopulationInput[] {
+    const rows = this.db
+      .prepare(
+        `SELECT object_api_name, field_name, ref_object, strategy, source_rows, target_rows,
+                source_count, target_count, status
+           FROM lookup_population WHERE run_id = ?
+          ORDER BY CASE status WHEN 'dropped' THEN 0 WHEN 'partial' THEN 1 WHEN 'notDeployed' THEN 2 ELSE 3 END,
+                   object_api_name, field_name`
+      )
+      .all(runId) as Array<Record<string, unknown>>
+    return rows.map((r) => ({
+      objectApiName: String(r.object_api_name),
+      fieldName: String(r.field_name),
+      refObject: r.ref_object == null ? null : String(r.ref_object),
+      strategy: r.strategy == null ? null : String(r.strategy),
+      sourceRows: Number(r.source_rows),
+      targetRows: Number(r.target_rows),
+      sourceCount: Number(r.source_count),
+      targetCount: Number(r.target_count),
+      status: String(r.status) as LookupPopulationStatus
+    }))
+  }
+
   /** S63: the text-Id relink ledger — INSERT OR REPLACE so a resumed pass overwrites its own rows. */
   recordTextIdRelinks(runId: number, rows: TextIdRelinkInput[]): void {
     if (rows.length === 0) return

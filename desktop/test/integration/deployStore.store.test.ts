@@ -1117,6 +1117,41 @@ describe('S63 — text_id_relinks ledger (migration 013)', () => {
   })
 })
 
+describe('DeployStore — S75 lookup population (migration 016)', () => {
+  const row = (objectApiName: string, fieldName: string, status: 'ok' | 'partial' | 'dropped' | 'notDeployed', sourceCount: number, targetCount: number) => ({
+    objectApiName, fieldName, refObject: 'X', strategy: 'nameMatch', sourceRows: 10, targetRows: 10, sourceCount, targetCount, status
+  })
+
+  it('stores per-object rows, replaces an object wholesale, and reads failures first', () => {
+    const { runId } = newRun()
+    store.deploy.recordLookupPopulation(runId, 'SBQQ__Subscription__c', [
+      row('SBQQ__Subscription__c', 'SBQQ__Product__c', 'ok', 10, 10),
+      row('SBQQ__Subscription__c', 'SBQQ__ProductOption__c', 'dropped', 6, 0),
+      row('SBQQ__Subscription__c', 'SBQQ__Contract__c', 'partial', 10, 9)
+    ])
+    store.deploy.recordLookupPopulation(runId, 'SBQQ__QuoteLine__c', [row('SBQQ__QuoteLine__c', 'SBQQ__Group__c', 'notDeployed', 4, 0)])
+    expect(store.deploy.lookupPopulation(runId).map((r) => `${r.status}:${r.fieldName}`)).toEqual([
+      'dropped:SBQQ__ProductOption__c',
+      'partial:SBQQ__Contract__c',
+      'notDeployed:SBQQ__Group__c',
+      'ok:SBQQ__Product__c'
+    ])
+    // A resumed check re-records the object: its rows are replaced, the other object's stay.
+    store.deploy.recordLookupPopulation(runId, 'SBQQ__Subscription__c', [row('SBQQ__Subscription__c', 'SBQQ__ProductOption__c', 'ok', 6, 6)])
+    const after = store.deploy.lookupPopulation(runId)
+    expect(after).toHaveLength(2)
+    expect(after.find((r) => r.fieldName === 'SBQQ__ProductOption__c')).toMatchObject({ status: 'ok', sourceCount: 6, targetCount: 6, sourceRows: 10, strategy: 'nameMatch', refObject: 'X' })
+    expect(store.deploy.lookupPopulation(runId + 1)).toEqual([])
+  })
+
+  it('migration 016 is registered after 015 and the table has the status CHECK', () => {
+    const ids = MIGRATIONS.map((m) => m.id)
+    expect(ids.indexOf('016-lookup-population')).toBe(ids.indexOf('015-deployment-kind') + 1)
+    const { runId } = newRun()
+    expect(() => store.deploy.recordLookupPopulation(runId, 'X', [row('X', 'f', 'bogus' as 'ok', 1, 1)])).toThrow(/CHECK constraint/)
+  })
+})
+
 describe('DeployStore — run-scoped counters agree with the migration-012 views (S64 P5 5.3)', () => {
   it('objectCounters / runCounters / deployedSourceIds / skipReasonCounts match the view rows byte for byte, per run', () => {
     // Two runs with overlapping objects, multiple attempts and retry passes, so

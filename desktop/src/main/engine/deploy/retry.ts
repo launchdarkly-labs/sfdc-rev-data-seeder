@@ -85,7 +85,7 @@ export async function runRetryPass(plan: DeployPlan, ctx: ObjectPassContext): Pr
     // top). Target-side state changes between chunks stay visible, exactly as
     // in-org (E4E.3 review: a per-drain snapshot missed a PBE deactivated
     // mid-drain — failed-vs-skipped outcome divergence on later chunks).
-    const octx = await buildObjectContext(objPlan, io)
+    const octx = await buildObjectContext(objPlan, io, ctx.runId)
 
     const soql = buildRetrySourceQuery(
       objectName,

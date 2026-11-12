@@ -140,6 +140,10 @@ class FakeStore implements DeployRunStore {
   orphanGroups: OrphanedLinkGroup[] = []
   recordStrippedRefs(): void {}
   recordTextIdRelinks(): void {}
+  recordLookupPopulation(): void {}
+  lookupPopulation(): never[] {
+    return []
+  }
   textIdRelinkSummary(): never {
     throw new Error('unused')
   }
@@ -933,6 +937,31 @@ describe('orchestrator — S63 text-Id relink hook', () => {
     expect(outcome).toBe('failed')
     expect(seq(calls)).toEqual(['first:Account', 'finalize:failed', 'restore:failed'])
     expect(logs.some((l) => l.startsWith('Text-Id relink failed: target unreachable'))).toBe(true)
+  })
+
+  it('S75: the lookup population check runs after the relink and before Finalizing; findings do not fail the run', async () => {
+    const { io, passes, calls } = harness([walkObj('Account', 1)])
+    passes.relinkPass = async () => {
+      calls.push({ kind: 'relink' })
+    }
+    passes.populationCheck = async () => {
+      calls.push({ kind: 'lookupCheck' })
+      return { dropped: 3 }
+    }
+    const outcome = await runDeployment(1, io, passes)
+    expect(outcome).toBe('completed')
+    expect(seq(calls)).toEqual(['first:Account', 'relink', 'lookupCheck', 'finalize:completed', 'restore:completed'])
+  })
+
+  it('S75: a lookup check that cannot run is a Warning — contracts still activate, automation is still restored', async () => {
+    const { io, passes, calls, logs } = harness([walkObj('Account', 1)])
+    passes.populationCheck = async () => {
+      throw new Error('source unreachable')
+    }
+    const outcome = await runDeployment(1, io, passes)
+    expect(outcome).toBe('completed')
+    expect(seq(calls)).toEqual(['first:Account', 'finalize:completed', 'restore:completed'])
+    expect(logs.some((l) => l.startsWith('Lookup population check did not complete: source unreachable'))).toBe(true)
   })
 
   it('without the hook nothing changes (scripted executors stay small)', async () => {
