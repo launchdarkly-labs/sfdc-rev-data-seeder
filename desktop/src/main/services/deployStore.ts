@@ -840,27 +840,28 @@ export class DeployStore {
     const ins = this.db.prepare(
       `INSERT INTO lookup_population
          (run_id, object_api_name, field_name, ref_object, strategy, source_rows, target_rows,
-          source_count, target_count, status, created_at)
+          source_count, target_count, in_scope_count, status, created_at)
        VALUES
          (@runId, @objectApiName, @fieldName, @refObject, @strategy, @sourceRows, @targetRows,
-          @sourceCount, @targetCount, @status, @createdAt)`
+          @sourceCount, @targetCount, @inScopeCount, @status, @createdAt)`
     )
     const createdAt = Date.now()
     const tx = this.db.transaction(() => {
       del.run(runId, objectApiName)
-      for (const r of rows) ins.run({ ...r, runId, createdAt })
+      for (const r of rows) ins.run({ ...r, inScopeCount: r.inScopeCount ?? null, runId, createdAt })
     })
     tx()
   }
 
-  /** S75: the run's lookup population rows — failures first, then warnings, then the clean ones. */
+  /** S75: the run's lookup population rows — failures first, then warnings, then the notes, then the clean ones. */
   lookupPopulation(runId: number): LookupPopulationInput[] {
     const rows = this.db
       .prepare(
         `SELECT object_api_name, field_name, ref_object, strategy, source_rows, target_rows,
-                source_count, target_count, status
+                source_count, target_count, in_scope_count, status
            FROM lookup_population WHERE run_id = ?
-          ORDER BY CASE status WHEN 'dropped' THEN 0 WHEN 'partial' THEN 1 WHEN 'notDeployed' THEN 2 ELSE 3 END,
+          ORDER BY CASE status WHEN 'dropped' THEN 0 WHEN 'partial' THEN 1 WHEN 'outOfScope' THEN 2
+                               WHEN 'notDeployed' THEN 3 ELSE 4 END,
                    object_api_name, field_name`
       )
       .all(runId) as Array<Record<string, unknown>>
@@ -873,6 +874,7 @@ export class DeployStore {
       targetRows: Number(r.target_rows),
       sourceCount: Number(r.source_count),
       targetCount: Number(r.target_count),
+      inScopeCount: r.in_scope_count == null ? null : Number(r.in_scope_count),
       status: String(r.status) as LookupPopulationStatus
     }))
   }

@@ -1118,8 +1118,15 @@ describe('S63 — text_id_relinks ledger (migration 013)', () => {
 })
 
 describe('DeployStore — S75 lookup population (migration 016)', () => {
-  const row = (objectApiName: string, fieldName: string, status: 'ok' | 'partial' | 'dropped' | 'notDeployed', sourceCount: number, targetCount: number) => ({
-    objectApiName, fieldName, refObject: 'X', strategy: 'nameMatch', sourceRows: 10, targetRows: 10, sourceCount, targetCount, status
+  const row = (
+    objectApiName: string,
+    fieldName: string,
+    status: 'ok' | 'partial' | 'dropped' | 'notDeployed' | 'outOfScope',
+    sourceCount: number,
+    targetCount: number,
+    inScopeCount: number | null = null
+  ) => ({
+    objectApiName, fieldName, refObject: 'X', strategy: 'nameMatch', sourceRows: 10, targetRows: 10, sourceCount, targetCount, inScopeCount, status
   })
 
   it('stores per-object rows, replaces an object wholesale, and reads failures first', () => {
@@ -1149,6 +1156,36 @@ describe('DeployStore — S75 lookup population (migration 016)', () => {
     expect(ids.indexOf('016-lookup-population')).toBe(ids.indexOf('015-deployment-kind') + 1)
     const { runId } = newRun()
     expect(() => store.deploy.recordLookupPopulation(runId, 'X', [row('X', 'f', 'bogus' as 'ok', 1, 1)])).toThrow(/CHECK constraint/)
+  })
+})
+
+describe('DeployStore — S76 lookup population scope (migration 017)', () => {
+  const row = (fieldName: string, status: 'ok' | 'dropped' | 'outOfScope' | 'notDeployed' | 'partial', sourceCount: number, targetCount: number, inScopeCount: number | null) => ({
+    objectApiName: 'Contact', fieldName, refObject: 'Account', strategy: 'externalId', sourceRows: 10, targetRows: 10, sourceCount, targetCount, inScopeCount, status
+  })
+
+  it('is registered after 016, stores the in-scope count and the outOfScope status, and reads notes after warnings', () => {
+    const ids = MIGRATIONS.map((m) => m.id)
+    expect(ids.indexOf('017-lookup-population-scope')).toBe(ids.indexOf('016-lookup-population') + 1)
+    const { runId } = newRun()
+    store.deploy.recordLookupPopulation(runId, 'Contact', [
+      row('ReportsToId', 'ok', 3, 2, 2),
+      row('Skipped__c', 'notDeployed', 4, 0, null),
+      row('Past_Account__c', 'outOfScope', 2, 0, 0),
+      row('AccountId', 'partial', 9, 8, 9),
+      row('Broken__c', 'dropped', 5, 0, 5)
+    ])
+    const read = store.deploy.lookupPopulation(runId)
+    expect(read.map((r) => `${r.status}:${r.fieldName}`)).toEqual([
+      'dropped:Broken__c',
+      'partial:AccountId',
+      'outOfScope:Past_Account__c',
+      'notDeployed:Skipped__c',
+      'ok:ReportsToId'
+    ])
+    expect(read.find((r) => r.fieldName === 'Past_Account__c')!.inScopeCount).toBe(0)
+    expect(read.find((r) => r.fieldName === 'Skipped__c')!.inScopeCount).toBeNull()
+    expect(read.find((r) => r.fieldName === 'ReportsToId')!.inScopeCount).toBe(2)
   })
 })
 

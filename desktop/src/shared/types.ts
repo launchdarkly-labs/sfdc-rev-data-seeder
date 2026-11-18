@@ -371,7 +371,9 @@ export interface LookupPopulationView {
   targetRows: number
   sourceCount: number
   targetCount: number
-  status: 'ok' | 'partial' | 'dropped' | 'notDeployed'
+  /** S76: source rows whose parent was in scope; null when not measured. */
+  inScopeCount: number | null
+  status: 'ok' | 'partial' | 'dropped' | 'notDeployed' | 'outOfScope'
 }
 
 /** One plan object with its counters (zeros before/without a run). */

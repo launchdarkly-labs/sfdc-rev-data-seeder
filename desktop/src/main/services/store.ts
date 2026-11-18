@@ -944,6 +944,43 @@ export const MIGRATIONS: { id: string; sql: string }[] = [
       );
       CREATE INDEX idx_lookup_population_run ON lookup_population(run_id, status);
     `
+  },
+  {
+    // 017 — S76: the lookup population check learns SCOPE. A lookup to a record
+    // the run itself carries can only land when that parent is in scope; the
+    // first live run failed the check on four fields whose every source value
+    // pointed at an account outside it. `in_scope_count` = the source rows
+    // whose parent was reachable (NULL = not measured), and the new status
+    // 'outOfScope' = none was. The status list is a CHECK constraint, so the
+    // table is rebuilt (nothing references it); 016's rows are carried over.
+    id: '017-lookup-population-scope',
+    sql: `
+      CREATE TABLE lookup_population_new (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id          INTEGER NOT NULL REFERENCES deploy_runs(id) ON DELETE CASCADE,
+        object_api_name TEXT NOT NULL,
+        field_name      TEXT NOT NULL,
+        ref_object      TEXT,
+        strategy        TEXT,
+        source_rows     INTEGER NOT NULL,
+        target_rows     INTEGER NOT NULL,
+        source_count    INTEGER NOT NULL,
+        target_count    INTEGER NOT NULL,
+        in_scope_count  INTEGER,
+        status          TEXT NOT NULL CHECK (status IN ('ok','partial','dropped','notDeployed','outOfScope')),
+        created_at      INTEGER NOT NULL,
+        UNIQUE (run_id, object_api_name, field_name)
+      );
+      INSERT INTO lookup_population_new
+        (id, run_id, object_api_name, field_name, ref_object, strategy, source_rows, target_rows,
+         source_count, target_count, in_scope_count, status, created_at)
+      SELECT id, run_id, object_api_name, field_name, ref_object, strategy, source_rows, target_rows,
+             source_count, target_count, NULL, status, created_at
+        FROM lookup_population;
+      DROP TABLE lookup_population;
+      ALTER TABLE lookup_population_new RENAME TO lookup_population;
+      CREATE INDEX idx_lookup_population_run ON lookup_population(run_id, status);
+    `
   }
 ]
 

@@ -659,7 +659,16 @@ const LOOKUP_STATUS_LABEL: Record<LookupPopulationView['status'], string> = {
   dropped: 'Empty on target',
   partial: 'Partly populated',
   notDeployed: 'Not deployed',
+  outOfScope: 'Parent out of scope',
   ok: 'OK'
+}
+
+/** S76: an OK row whose target is short of the source only because some parents were outside the scope. */
+function lookupResultLabel(r: LookupPopulationView): string {
+  if (r.status === 'ok' && r.inScopeCount != null && r.inScopeCount < r.sourceCount) {
+    return `OK (${r.sourceCount - r.inScopeCount} out of scope)`
+  }
+  return LOOKUP_STATUS_LABEL[r.status]
 }
 
 /**
@@ -677,7 +686,8 @@ function LookupPopulationTable({ rows }: { rows: LookupPopulationView[] }): Reac
       <p className="muted">
         For every lookup field on the deployed objects: rows with a value on the source against rows with a value
         on the target, over the rows this run deployed. A mapped lookup that is populated on the source and empty
-        on every target row fails the check.{' '}
+        on every target row fails the check. A lookup to a record this run carries is judged on the rows whose
+        parent was in scope or already on the target (&quot;In scope&quot;).{' '}
         {okCount > 0 && (
           <button className="btn btn-small" onClick={() => setShowOk(!showOk)}>
             {showOk ? 'hide' : 'show'} {okCount} clean
@@ -694,6 +704,7 @@ function LookupPopulationTable({ rows }: { rows: LookupPopulationView[] }): Reac
               <th>Points at</th>
               <th>Mapping</th>
               <th className="num">Source</th>
+              <th className="num">In scope</th>
               <th className="num">Target</th>
               <th>Result</th>
             </tr>
@@ -707,13 +718,20 @@ function LookupPopulationTable({ rows }: { rows: LookupPopulationView[] }): Reac
                 <td>{r.refObject ?? '—'}</td>
                 <td>{r.strategy === 'notInPlan' ? 'not in the plan' : (r.strategy ?? '—')}</td>
                 <td className="num">{r.sourceCount}</td>
+                <td className="num">{r.inScopeCount ?? '—'}</td>
                 <td className="num">{r.targetCount}</td>
                 <td
                   className={
-                    r.status === 'dropped' ? 'status-err' : r.status === 'ok' ? 'status-ok' : 'status-warn'
+                    r.status === 'dropped'
+                      ? 'status-err'
+                      : r.status === 'ok'
+                        ? 'status-ok'
+                        : r.status === 'outOfScope'
+                          ? 'muted'
+                          : 'status-warn'
                   }
                 >
-                  {LOOKUP_STATUS_LABEL[r.status]}
+                  {lookupResultLabel(r)}
                 </td>
               </tr>
             ))}

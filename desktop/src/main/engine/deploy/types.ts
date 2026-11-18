@@ -197,7 +197,7 @@ export interface TextIdRelinkSummary {
 }
 
 /** S75 — the lookup population check (engine/deploy/lookupPopulation.ts). */
-export type LookupPopulationStatus = 'ok' | 'partial' | 'dropped' | 'notDeployed'
+export type LookupPopulationStatus = 'ok' | 'partial' | 'dropped' | 'notDeployed' | 'outOfScope'
 
 /** One reference field's non-null counts over the rows a run deployed, source vs target. */
 export interface LookupPopulationInput {
@@ -210,6 +210,11 @@ export interface LookupPopulationInput {
   targetRows: number
   sourceCount: number
   targetCount: number
+  /**
+   * S76: of `sourceCount`, the rows whose parent was reachable (deployed by the run or already on
+   * the target). Null when the field was not measured — it was clean, or has no scope.
+   */
+  inScopeCount: number | null
   status: LookupPopulationStatus
 }
 

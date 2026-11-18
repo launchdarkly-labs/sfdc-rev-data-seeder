@@ -846,9 +846,35 @@ describe('DeploymentDetailPage — S75 lookup population check', () => {
     run: { id: 7, phase: 'Completed', currentObject: null, currentPass: null, cancelRequested: false, teardownOutcome: 'completed', startedAt: 1, finishedAt: 2 },
     counters: { recordsQueried: 20, recordsDeployed: 20, recordsFailed: 0, recordsSkipped: 0 }
   } as const
-  const row = (fieldName: string, status: 'ok' | 'partial' | 'dropped' | 'notDeployed', sourceCount: number, targetCount: number, strategy = 'nameMatch') => ({
-    objectApiName: 'SBQQ__Subscription__c', fieldName, refObject: fieldName, strategy, sourceRows: 1102, targetRows: 1102, sourceCount, targetCount, status
+  const row = (
+    fieldName: string,
+    status: 'ok' | 'partial' | 'dropped' | 'notDeployed' | 'outOfScope',
+    sourceCount: number,
+    targetCount: number,
+    strategy = 'nameMatch',
+    inScopeCount: number | null = null
+  ) => ({
+    objectApiName: 'SBQQ__Subscription__c', fieldName, refObject: fieldName, strategy, sourceRows: 1102, targetRows: 1102, sourceCount, targetCount, inScopeCount, status
   })
+
+  it('S76: a lookup whose parents are all outside the scope is a note, not a failure; an OK row says how many were out of scope', async () => {
+    state = base({
+      ...done,
+      lookupPopulation: [
+        row('Past_Account__c', 'outOfScope', 3, 0, 'externalId', 0),
+        row('SBQQ__PrimaryContact__c', 'ok', 196, 191, 'externalId', 191)
+      ]
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'gpr test' })
+    expect(screen.queryByTestId('lookup-check-failed')).not.toBeInTheDocument()
+    const table = screen.getByTestId('lookup-population')
+    expect(table).toHaveTextContent('In scope')
+    expect(table).toHaveTextContent('Parent out of scope')
+    fireEvent.click(screen.getByRole('button', { name: 'show 1 clean' }))
+    expect(table).toHaveTextContent('OK (5 out of scope)')
+  })
+
 
   it('a mapped lookup that landed empty raises the failed banner and heads the table; clean rows are folded', async () => {
     state = base({

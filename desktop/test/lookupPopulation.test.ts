@@ -6,9 +6,15 @@
  * classification table, keyed and keyless target scoping, unmapped fields
  * reported but not failed, the per-object replace, junctions skipped, an
  * unreadable object, cancel.
+ *
+ * S76 — scope: a dropped / partial External ID lookup to an object of the plan
+ * is judged on the source values whose parent was reachable (deployed by the
+ * run, or already on the target), so a reference to a record outside the scope
+ * no longer fails the check — the first live run's four false failures.
  */
 import { describe, it, expect } from 'vitest'
 import {
+  classifyInScope,
   classifyPopulation,
   planMapsField,
   runLookupPopulationCheck
@@ -88,7 +94,9 @@ describe('runLookupPopulationCheck', () => {
       target: { SBQQ__ProductOption__c: 0, SBQQ__Product__c: 3, SBQQ__Contract__c: 2, SBQQ__OrderProduct__c: 0, CreatedById: 3 }
     })
     const r = await runLookupPopulationCheck(plan, 1, h.io)
-    expect(r).toEqual({ compared: 5, dropped: 1, partial: 1, notDeployed: 1 })
+    expect(r).toEqual({ compared: 5, dropped: 1, partial: 1, notDeployed: 1, outOfScope: 0 })
+    // Contract is not an object of this plan, so its External ID lookup has no scope to measure.
+    expect(h.store.lookupRows.every((x) => x.inScopeCount === null)).toBe(true)
 
     const by = Object.fromEntries(h.store.lookupRows.map((x) => [x.fieldName, x]))
     expect(by.SBQQ__ProductOption__c).toMatchObject({ status: 'dropped', sourceCount: 2, targetCount: 0, strategy: 'nameMatch', refObject: 'SBQQ__ProductOption__c' })
@@ -161,5 +169,159 @@ describe('runLookupPopulationCheck', () => {
     const r = await runLookupPopulationCheck(plan, 1, h.io)
     expect(r.compared).toBe(0)
     expect(h.store.lookupRows).toEqual([])
+  })
+})
+
+describe('S76 — lookups to records outside the run\'s scope', () => {
+  const CON = 'Contact'
+  const C = ['003000000000001AAA', '003000000000002AAA', '003000000000003AAA']
+  const A_IN = '001000000000001AAA'
+  const A_OUT = ['001000000000008AAA', '001000000000009AAA']
+  const C_OUT = '003000000000009AAA'
+  const fields = [
+    fld('Id'),
+    ref('Past_Account__c', 'Account'),
+    ref('ReportsToId', 'Contact'),
+    ref('SBQQ__ProductOption__c', 'SBQQ__ProductOption__c')
+  ]
+  const plan = planOf(
+    frozenObject('Account', []),
+    frozenObject(CON, ['Past_Account__c', 'ReportsToId', 'SBQQ__ProductOption__c'], {
+      mappings: {
+        Past_Account__c: { strategy: 'externalId', matchField: null, customValue: null },
+        ReportsToId: { strategy: 'externalId', matchField: null, customValue: null },
+        SBQQ__ProductOption__c: { strategy: 'nameMatch', matchField: 'Name', customValue: null }
+      }
+    })
+  )
+  const ok = (objectApiName: string, sourceId: string) => ({ objectApiName, sourceId, pass: 1 as const, retryPass: 0, objectAttempt: 0, outcome: 'success' as const })
+
+  /** `parents` = the rows the second look reads back; `onTarget` = parent source ids already on the target (keyed). */
+  function scoped(o: {
+    source: Record<string, number>
+    target: Record<string, number>
+    parents: Array<Record<string, unknown>>
+    onTarget?: string[]
+    failParents?: boolean
+  }) {
+    const h = harness({
+      sourceDescribe: fields,
+      onQuerySource: (soql) => {
+        if (soql.includes('FROM Account')) return answer(soql, 1, {})
+        if (soql.includes('COUNT(')) return answer(soql, 3, o.source)
+        if (o.failParents) throw new Error('QUERY_TIMEOUT')
+        return o.parents
+      },
+      onQueryTarget: (soql) => {
+        if (soql.includes('FROM Account') && soql.includes('COUNT(')) return answer(soql, 1, {})
+        if (soql.includes('COUNT(')) return answer(soql, 3, o.target)
+        return (o.onTarget ?? []).filter((id) => soql.includes(generateExternalId(id))).map((id) => ({ [EXTERNAL_ID_FIELD]: generateExternalId(id) }))
+      }
+    })
+    h.store.results.push(ok('Account', A_IN), ...C.map((id) => ok(CON, id)))
+    return h
+  }
+  const rowsOf = (h: ReturnType<typeof scoped>) => Object.fromEntries(h.store.lookupRows.map((x) => [x.fieldName, x]))
+
+  it('classifyInScope: nothing reachable is out of scope; a reachable parent that did not land still fails', () => {
+    expect(classifyInScope(0, 0)).toBe('outOfScope')
+    expect(classifyInScope(2, 2)).toBe('ok')
+    expect(classifyInScope(2, 3)).toBe('ok')
+    expect(classifyInScope(2, 1)).toBe('partial')
+    expect(classifyInScope(2, 0)).toBe('dropped')
+  })
+
+  it('every parent outside the scope → out of scope, not a failure; a natural-key lookup at zero still fails', async () => {
+    const h = scoped({
+      source: { Past_Account__c: 2, ReportsToId: 3, SBQQ__ProductOption__c: 2 },
+      target: { Past_Account__c: 0, ReportsToId: 2, SBQQ__ProductOption__c: 0 },
+      parents: [
+        { Past_Account__c: A_OUT[0], ReportsToId: C[1] },
+        { Past_Account__c: A_OUT[1], ReportsToId: C[2] },
+        { Past_Account__c: null, ReportsToId: C_OUT }
+      ]
+    })
+    const r = await runLookupPopulationCheck(plan, 1, h.io)
+    expect(r).toEqual({ compared: 3, dropped: 1, partial: 0, notDeployed: 0, outOfScope: 1 })
+    const by = rowsOf(h)
+    expect(by.Past_Account__c).toMatchObject({ status: 'outOfScope', sourceCount: 2, inScopeCount: 0, targetCount: 0 })
+    // Two of the three managers were deployed by this run and both landed; the third is outside it.
+    expect(by.ReportsToId).toMatchObject({ status: 'ok', sourceCount: 3, inScopeCount: 2, targetCount: 2 })
+    // No scope for a natural-key lookup: the plain rule stands.
+    expect(by.SBQQ__ProductOption__c).toMatchObject({ status: 'dropped', inScopeCount: null })
+
+    const note = h.logs.find((l) => /outside this run's scope/.test(l.message))!
+    expect(note.level).toBe('Info')
+    expect(note.detail).toContain('Past_Account__c → Account: source 2, in scope 0, target 0 (externalId)')
+    expect(h.logs.at(-1)!.message).toMatch(/FAILED: 1 of 3/)
+  })
+
+  it('only out-of-scope references → the check passes', async () => {
+    const h = scoped({
+      source: { Past_Account__c: 1 },
+      target: { Past_Account__c: 0 },
+      parents: [{ Past_Account__c: A_OUT[0], ReportsToId: null }]
+    })
+    const r = await runLookupPopulationCheck(plan, 1, h.io)
+    expect(r.dropped).toBe(0)
+    expect(h.logs.at(-1)).toMatchObject({ level: 'Info' })
+    expect(h.logs.at(-1)!.message).toMatch(/passed: 1 populated lookup field\(s\) compared, 0 partly populated, 0 not deployed, 1 out of scope/)
+  })
+
+  it('keyed: a parent already on the target by its RDS key is reachable — empty on the target is a real failure', async () => {
+    const h = scoped({
+      source: { Past_Account__c: 2 },
+      target: { Past_Account__c: 0 },
+      parents: [{ Past_Account__c: A_OUT[0] }, { Past_Account__c: A_OUT[1] }],
+      onTarget: [A_OUT[0]!]
+    })
+    const r = await runLookupPopulationCheck(plan, 1, h.io)
+    expect(r.dropped).toBe(1)
+    expect(rowsOf(h).Past_Account__c).toMatchObject({ status: 'dropped', inScopeCount: 1 })
+    expect(h.targetSoqls.some((q) => q.startsWith(`SELECT ${EXTERNAL_ID_FIELD} FROM Account WHERE ${EXTERNAL_ID_FIELD} IN (`))).toBe(true)
+  })
+
+  it('a parent deployed by this run that did not land is a failure; the run\'s own rows need no target read', async () => {
+    const h = scoped({
+      source: { Past_Account__c: 1 },
+      target: { Past_Account__c: 0 },
+      parents: [{ Past_Account__c: A_IN }]
+    })
+    const r = await runLookupPopulationCheck(plan, 1, h.io)
+    expect(r.dropped).toBe(1)
+    expect(h.targetSoqls.some((q) => q.startsWith(`SELECT ${EXTERNAL_ID_FIELD} FROM Account`))).toBe(false)
+  })
+
+  it('keyless: reachability comes from the id map; short of the reachable count is partial', async () => {
+    const h = scoped({
+      source: { Past_Account__c: 3 },
+      target: { Past_Account__c: 1 },
+      parents: [{ Past_Account__c: A_IN }, { Past_Account__c: A_OUT[0] }, { Past_Account__c: A_OUT[1] }]
+    })
+    const asked: string[][] = []
+    h.io.idMap = {
+      lookup: async (objectName, ids) => {
+        if (objectName === 'Account') {
+          asked.push([...ids])
+          return new Map(ids.filter((id) => id === A_OUT[0]).map((id) => [id, '001T00000000001AAA']))
+        }
+        return new Map(ids.map((s, i) => [s, '003T0000000000' + i + 'AAA']))
+      },
+      record: async () => {},
+      existingTargetIds: async () => new Set()
+    }
+    const r = await runLookupPopulationCheck(plan, 1, h.io)
+    expect(r).toMatchObject({ dropped: 0, partial: 1, outOfScope: 0 })
+    // A_IN was deployed by the run, A_OUT[0] is in the id map, A_OUT[1] is nowhere.
+    expect(rowsOf(h).Past_Account__c).toMatchObject({ status: 'partial', sourceCount: 3, inScopeCount: 2, targetCount: 1 })
+    expect(asked.some((ids) => ids.includes(A_OUT[0]!) && !ids.includes(A_IN))).toBe(true)
+  })
+
+  it('an unreadable scope leaves the plain verdict and says so', async () => {
+    const h = scoped({ source: { Past_Account__c: 1 }, target: { Past_Account__c: 0 }, parents: [], failParents: true })
+    const r = await runLookupPopulationCheck(plan, 1, h.io)
+    expect(r.dropped).toBe(1)
+    expect(rowsOf(h).Past_Account__c).toMatchObject({ status: 'dropped', inScopeCount: null })
+    expect(h.logs.some((l) => l.level === 'Warning' && /scope of 1 lookup\(s\) could not be read \(QUERY_TIMEOUT\)/.test(l.message))).toBe(true)
   })
 })

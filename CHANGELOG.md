@@ -24,6 +24,12 @@
   an error in the log, a red banner and a table on the deployment page. Skipped and not-in-plan fields are listed as
   "not deployed"; partly populated fields as warnings. The run still finishes its teardown. Read-only on both orgs
   (migration 016 stores the result).
+- **The check knows the run's scope.** A lookup to a record the run itself carries (an account's parent, an
+  opportunity's contact) can only land when that parent is in scope. A flagged lookup of that kind is now judged on the
+  rows whose parent was deployed by the run or is already on the target: none reachable is "Parent out of scope" (a
+  note, not a failure), all reachable ones landed is OK with the out-of-scope count shown, and a reachable parent that
+  did not land still fails. The table gains an "In scope" column. Lookups resolved by natural key, Name Match or
+  Direct ID have no scope and keep the plain rule (migration 017).
 
 ## 0.4.3 — 2026-11-07
 

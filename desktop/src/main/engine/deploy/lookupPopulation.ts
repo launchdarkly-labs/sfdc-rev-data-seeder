@@ -21,6 +21,25 @@
  *   partial      0 < target < source                                   → warning
  *   ok           target ≥ source
  *
+ * S76 — SCOPE. A lookup to a record the run itself carries (Account.ParentId,
+ * Opportunity.ContactId, …) can only land when that parent is in the run's
+ * scope or already on the target. The first live run (deployment 74) failed the
+ * check on four such fields whose 1–3 source values all pointed at accounts
+ * OUTSIDE the scope. So a field that comes out `dropped` or `partial`, is on
+ * the External ID strategy and points at ONE object of the plan gets a second
+ * look: the parents behind its source values are read, and the count of values
+ * whose parent is REACHABLE (deployed by this run, or already on the target —
+ * keyless: the id map; keyed: its RDS key) replaces the source count as the
+ * yardstick:
+ *
+ *   outOfScope   no value has a reachable parent                       → note
+ *   ok           target ≥ reachable (the rest is out of scope)
+ *   partial      0 < target < reachable                                → warning
+ *   dropped      target = 0 with a reachable parent                    → FAIL
+ *
+ * Lookups resolved by natural key, Name Match or Direct ID have no scope —
+ * they keep the plain rule. A clean field costs nothing extra.
+ *
  * A `dropped` field does not abort the run — contracts still activate and
  * automation is still restored — but it is logged as an Error, stored
  * (lookup_population, migration 016) and shown on the deployment page as a
@@ -48,6 +67,8 @@ export interface LookupPopulationResult {
   dropped: number
   partial: number
   notDeployed: number
+  /** Fields whose every source value points at a record outside the run's scope. */
+  outOfScope: number
 }
 
 export function makeLookupPopulationCheck(
@@ -64,6 +85,16 @@ export function classifyPopulation(sourceCount: number, targetCount: number, map
   return 'ok'
 }
 
+/**
+ * S76: the status of a scope-able field once the number of source values with a
+ * REACHABLE parent is known. Only called for a field the plan maps.
+ */
+export function classifyInScope(inScopeCount: number, targetCount: number): LookupPopulationStatus {
+  if (inScopeCount <= 0) return 'outOfScope'
+  if (targetCount >= inScopeCount) return 'ok'
+  return targetCount <= 0 ? 'dropped' : 'partial'
+}
+
 /** Does the frozen plan write this reference field (kept, and not on Skip)? */
 export function planMapsField(objPlan: FrozenObjectPlan, apiName: string): boolean {
   if (!objPlan.fields.includes(apiName)) return false
@@ -76,7 +107,10 @@ export async function runLookupPopulationCheck(
   runId: number,
   io: DeployIo
 ): Promise<LookupPopulationResult> {
-  const total: LookupPopulationResult = { compared: 0, dropped: 0, partial: 0, notDeployed: 0 }
+  const total: LookupPopulationResult = { compared: 0, dropped: 0, partial: 0, notDeployed: 0, outOfScope: 0 }
+  const planObjects = new Map<string, string>()
+  for (const o of plan.objects) if (!o.isJunction) planObjects.set(o.objectName.toLowerCase(), o.objectName)
+  const reach: ReachCache = new Map()
   const keyless = io.idMap != null
 
   for (const objPlan of plan.objects) {
@@ -140,8 +174,35 @@ export async function runLookupPopulationCheck(
         targetRows: tgt.rows,
         sourceCount,
         targetCount,
+        inScopeCount: null,
         status
       })
+    }
+
+    // S76: second look at the flagged fields that point at an object of this plan.
+    const scoped = rows.filter(
+      (r) =>
+        (r.status === 'dropped' || r.status === 'partial') &&
+        r.strategy != null &&
+        ciEquals(r.strategy, 'externalId') &&
+        planMapsField(objPlan, r.fieldName) &&
+        (fields.find((f) => f.apiName === r.fieldName)?.referenceTo?.length ?? 0) === 1 &&
+        planObjects.has((r.refObject ?? '').toLowerCase())
+    )
+    if (scoped.length > 0) {
+      try {
+        const parents = await sourceParents(io, objectName, scoped.map((r) => r.fieldName), sourceIds)
+        for (const r of scoped) {
+          const byParent = parents.get(r.fieldName) ?? new Map<string, number>()
+          const reachable = await reachableParents(io, runId, planObjects.get(r.refObject!.toLowerCase())!, [...byParent.keys()], keyless, reach)
+          let inScope = 0
+          for (const [parentId, n] of byParent) if (reachable.has(parentId)) inScope += n
+          r.inScopeCount = inScope
+          r.status = classifyInScope(inScope, r.targetCount)
+        }
+      } catch (e) {
+        log(io, runId, 'Warning', `Lookup check ${objectName}: the scope of ${scoped.length} lookup(s) could not be read (${e instanceof Error ? e.message : String(e)}) — judged on the plain counts`, objectName)
+      }
     }
     io.store.recordLookupPopulation(runId, objectName, rows)
 
@@ -150,9 +211,12 @@ export async function runLookupPopulationCheck(
     total.dropped += of('dropped').length
     total.partial += of('partial').length
     total.notDeployed += of('notDeployed').length
+    total.outOfScope += of('outOfScope').length
 
     const line = (r: LookupPopulationInput): string =>
-      `${r.fieldName} → ${r.refObject ?? '?'}: source ${r.sourceCount}, target ${r.targetCount}` +
+      `${r.fieldName} → ${r.refObject ?? '?'}: source ${r.sourceCount}, ` +
+      (r.inScopeCount != null ? `in scope ${r.inScopeCount}, ` : '') +
+      `target ${r.targetCount}` +
       (r.strategy != null ? ` (${r.strategy === 'notInPlan' ? 'not in the plan' : r.strategy})` : '')
     if (of('dropped').length > 0) {
       log(
@@ -175,6 +239,16 @@ export async function runLookupPopulationCheck(
         soft.map(line).join('\n')
       )
     }
+    if (of('outOfScope').length > 0) {
+      log(
+        io,
+        runId,
+        'Info',
+        `Lookup check ${objectName}: ${of('outOfScope').length} lookup(s) point only at records outside this run's scope — nothing to link`,
+        objectName,
+        of('outOfScope').map(line).join('\n')
+      )
+    }
   }
 
   log(
@@ -183,7 +257,7 @@ export async function runLookupPopulationCheck(
     total.dropped > 0 ? 'Error' : 'Info',
     total.dropped > 0
       ? `Lookup population check FAILED: ${total.dropped} of ${total.compared} populated lookup field(s) landed empty`
-      : `Lookup population check passed: ${total.compared} populated lookup field(s) compared, ${total.partial} partly populated, ${total.notDeployed} not deployed`,
+      : `Lookup population check passed: ${total.compared} populated lookup field(s) compared, ${total.partial} partly populated, ${total.notDeployed} not deployed, ${total.outOfScope} out of scope`,
     null
   )
   return total
@@ -222,6 +296,77 @@ async function countSide(
     if (at === 0) out.rows = rows
   }
   return out
+}
+
+/** Per run: referenced object → parent source id → reachable? */
+type ReachCache = Map<string, Map<string, boolean>>
+
+/**
+ * S76: for each field, the parents behind its source values over the deployed
+ * rows — parent source id → number of rows pointing at it. Plain rows, not an
+ * aggregate: a GROUP BY cannot page past 2,000 groups.
+ */
+async function sourceParents(
+  io: DeployIo,
+  objectName: string,
+  fieldNames: readonly string[],
+  sourceIds: readonly string[]
+): Promise<Map<string, Map<string, number>>> {
+  const out = new Map<string, Map<string, number>>()
+  for (const f of fieldNames) out.set(f, new Map())
+  const base =
+    `SELECT ${fieldNames.join(', ')} FROM ${objectName} WHERE (${fieldNames.map((f) => `${f} != null`).join(' OR ')}) AND Id IN (`
+  for (const chunk of chunkIds(sourceIds as string[], maxIdsForSoql(base.length + 1))) {
+    for await (const r of io.querySource(base + buildInClause(chunk) + ')')) {
+      for (const f of fieldNames) {
+        const v = r[f]
+        if (v == null || v === '') continue
+        const m = out.get(f)!
+        m.set(String(v), (m.get(String(v)) ?? 0) + 1)
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * S76: which of these parents the run could have linked to — deployed by this
+ * run, or already on the target from an earlier deployment (keyless: the id
+ * map; keyed: a row carrying the parent's RDS key).
+ */
+async function reachableParents(
+  io: DeployIo,
+  runId: number,
+  refObject: string,
+  parentIds: readonly string[],
+  keyless: boolean,
+  cache: ReachCache
+): Promise<Set<string>> {
+  let known = cache.get(refObject)
+  if (known == null) {
+    known = new Map()
+    for (const id of io.store.deployedSourceIds(runId, refObject)) known.set(id, true)
+    cache.set(refObject, known)
+  }
+  const unknown = parentIds.filter((id) => !known.has(id))
+  if (unknown.length > 0) {
+    const found = new Set<string>()
+    if (keyless) {
+      for (const id of (await io.idMap!.lookup(refObject, unknown)).keys()) found.add(id)
+    } else {
+      const byKey = new Map(unknown.map((id) => [generateExternalId(id), id]))
+      const base = `SELECT ${EXTERNAL_ID_FIELD} FROM ${refObject} WHERE ${EXTERNAL_ID_FIELD} IN (`
+      for (const chunk of chunkIds([...byKey.keys()], maxIdsForSoql(base.length + 1))) {
+        const inList = chunk.map((v) => `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',')
+        for await (const r of io.queryTarget(base + inList + ')')) {
+          const id = byKey.get(String(r[EXTERNAL_ID_FIELD]))
+          if (id != null) found.add(id)
+        }
+      }
+    }
+    for (const id of unknown) known.set(id, found.has(id))
+  }
+  return new Set(parentIds.filter((id) => known.get(id) === true))
 }
 
 function num(v: unknown): number {
