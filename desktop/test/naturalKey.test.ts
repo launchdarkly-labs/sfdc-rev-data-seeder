@@ -199,6 +199,72 @@ describe('resolveNaturalKey — Dimension and nested keys', () => {
   })
 })
 
+describe('resolveNaturalKey — Block Price', () => {
+  const BP = 'SBQQ__BlockPrice__c'
+  const bp = (Id: string, product: string, lower: number, upper: number | null, Name = Id): Row => ({
+    Id,
+    Name,
+    SBQQ__Product__c: product,
+    SBQQ__LowerBound__c: lower,
+    SBQQ__UpperBound__c: upper
+  })
+
+  it('is keyed on (Product, LowerBound), with the upper bound as the tie-break', () => {
+    expect(naturalKeyLabel(BP)).toBe('Product + LowerBound')
+    expect(CONFIG_NATURAL_KEYS[BP]!.tieBreak).toEqual(['SBQQ__UpperBound__c'])
+  })
+
+  it('resolves the open-ended top tier, whose upper bound is null on both orgs', async () => {
+    const { io } = mockIo({
+      [BP]: {
+        source: [bp('sBP1', 'P_MAU', 1, 1000), bp('sBP2', 'P_MAU', 1000, null)],
+        target: [bp('tBP2', 'P_MAU', 1000, null), bp('tBP1', 'P_MAU', 1, 1000)]
+      }
+    })
+    const r = await resolveNaturalKey(io, BP)
+    expect(r.map).toEqual({ sBP1: 'tBP1', sBP2: 'tBP2' })
+    expect(r.unresolved).toEqual({})
+  })
+
+  it('still links a tier whose upper bound was edited on one org', async () => {
+    const { io } = mockIo({
+      [BP]: { source: [bp('sBP1', 'P_MAU', 1, 1000)], target: [bp('tBP1', 'P_MAU', 1, 2000)] }
+    })
+    expect((await resolveNaturalKey(io, BP)).map).toEqual({ sBP1: 'tBP1' })
+  })
+
+  it('two target rows on one (Product, LowerBound): the upper bound decides, null matching only null', async () => {
+    const { io } = mockIo({
+      [BP]: {
+        source: [bp('sCapped', 'P_MAU', 1000, 5000), bp('sOpen', 'P_SEATS', 1000, null)],
+        target: [
+          bp('tCapped', 'P_MAU', 1000, 5000),
+          bp('tOther', 'P_MAU', 1000, 9000),
+          bp('tOpen', 'P_SEATS', 1000, null),
+          bp('tClosed', 'P_SEATS', 1000, 5000)
+        ]
+      }
+    })
+    const r = await resolveNaturalKey(io, BP)
+    expect(r.map).toEqual({ sCapped: 'tCapped', sOpen: 'tOpen' })
+    expect(r.ambiguousKeys).toBe(0)
+  })
+
+  it('two target rows the upper bound cannot tell apart are ambiguous — nothing is linked', async () => {
+    const { io } = mockIo({
+      [BP]: {
+        source: [bp('sBP1', 'P_MAU', 1000, null)],
+        // The same tier in two price books.
+        target: [bp('tPB1', 'P_MAU', 1000, null), bp('tPB2', 'P_MAU', 1000, null)]
+      }
+    })
+    const r = await resolveNaturalKey(io, BP)
+    expect(r.map).toEqual({})
+    expect(r.ambiguousKeys).toBe(1)
+    expect(r.unresolved['sBP1']).toContain('ambiguous, not linked')
+  })
+})
+
 describe('per-run cache', () => {
   it('queries an object once however many callers ask', async () => {
     const { io, calls } = mockIo({ [PO]: { source: [opt('s', 'B', 'X')], target: [opt('t', 'B', 'X')] } })

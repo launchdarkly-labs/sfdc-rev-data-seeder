@@ -9,9 +9,11 @@
   field without a log line. In the Configure Products screen every seeded bundle showed no option selected.
 - **Natural keys.** A lookup to a CPQ config object on Name Match now resolves by that object's own key, read from the
   source config row: Product Option by (Configured SKU, Optional SKU), Dimension and Product Feature by (product, name),
-  Discount Tier by (schedule, number, lower bound), Block Price by (product, lower bound, upper bound), Discount Schedule
+  Discount Tier by (schedule, number, lower bound), Block Price by (product, lower bound), Discount Schedule
   by name. Lookup parts of a key are translated to the target first. A key shared by several target rows is settled by
-  the tie-break field where one exists (Product Option: number) and is otherwise left empty — never last-wins.
+  the tie-break field where one exists (Product Option: number; Block Price: upper bound) and is otherwise left empty —
+  never last-wins. The upper bound is not part of the Block Price key because the top tier of a block-priced product
+  has none, and a key with an empty part resolves nothing.
 - **Nothing is dropped silently.** Each config object logs how many source rows matched; each lookup field that left
   values empty logs a warning with the count and the reason per record (missing key, ambiguous key, unreadable object).
 - **Defaults.** These config objects default to the natural key instead of Direct ID, and Suggest no longer flips them.

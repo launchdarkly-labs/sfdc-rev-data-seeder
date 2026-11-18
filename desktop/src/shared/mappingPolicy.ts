@@ -124,12 +124,13 @@ export const CONFIG_NATURAL_KEYS: Readonly<Record<string, NaturalKeySpec>> = {
       { field: 'SBQQ__LowerBound__c' }
     ]
   },
+  // The top tier of a block-priced product has NO upper bound, and a null key part
+  // resolves nothing — so the upper bound is not part of the key. Tiers of one product
+  // cannot overlap: (Product, LowerBound) names the tier. The upper bound only decides
+  // between rows that share that pair (a second price book), null matching null.
   SBQQ__BlockPrice__c: {
-    parts: [
-      { field: 'SBQQ__Product__c', ref: 'Product2' },
-      { field: 'SBQQ__LowerBound__c' },
-      { field: 'SBQQ__UpperBound__c' }
-    ]
+    parts: [{ field: 'SBQQ__Product__c', ref: 'Product2' }, { field: 'SBQQ__LowerBound__c' }],
+    tieBreak: ['SBQQ__UpperBound__c']
   }
 }
 
